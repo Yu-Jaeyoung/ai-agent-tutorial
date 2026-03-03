@@ -28,7 +28,8 @@ Continuous Encouragement: Always conclude your responses with a reinforcing and 
 if "agent" not in st.session_state:
     st.session_state["agent"] = Agent(
         name="Life Coach Agent",
-        instructions=instruction
+        instructions=instruction,
+        model="gpt-4o-mini"
     )
 
 agent = st.session_state["agent"]
@@ -41,18 +42,40 @@ if "session" not in st.session_state:
 
 session = st.session_state["session"]
 
-async def run_agent(message):
-    stream = Runner.run_streamed(
-        agent,
-        message,
-        session=session
-    )
 
-    async for event in stream.stream_events():
-        if event.type == "raw_response_event":
-            if event.data.type == "response.output_text.delta":
-                with st.chat_message("ai"):
-                    st.write(event.data.delta)
+async def paint_history():
+    messages = await session.get_items()
+
+    for message in messages:
+        with st.chat_message(message["role"]):
+            if message["role"] == "user":
+                st.write(message["content"])
+
+            if message["role"] == "assistant":
+                if message["type"] == "message":
+                    st.write(message["content"][0]["text"])
+
+
+asyncio.run(paint_history())
+
+
+async def run_agent(message):
+    with st.chat_message("ai"):
+        text_placeholder = st.empty()
+
+        response = ""
+
+        stream = Runner.run_streamed(
+            agent,
+            message,
+            session=session
+        )
+
+        async for event in stream.stream_events():
+            if event.type == "raw_response_event":
+                if event.data.type == "response.output_text.delta":
+                    response += event.data.delta
+                    text_placeholder.write(response)
 
 
 prompt = st.chat_input("Write a message for your assistant")
