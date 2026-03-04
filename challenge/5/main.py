@@ -5,11 +5,11 @@ import streamlit as st
 from openai import OpenAI
 from agents import Agent, Runner, SQLiteSession, WebSearchTool, FileSearchTool, ModelSettings
 
-client = OpenAI()
-
 dotenv.load_dotenv()
 
 VECTOR_STORE_ID = os.getenv("VECTOR_STORE_ID")
+
+client = OpenAI()
 
 instruction = """
 1. Role
@@ -46,6 +46,8 @@ Your goal is to give practical advice the user can apply right away, reduce emot
 6. Safety Guide
 - For high-risk topics (medical, legal, financial), provide only general information and recommend consulting a qualified professional.
 - If there are signs of self-harm or harm to others, prioritize immediate safety guidance and encourage professional crisis support.
+
+MUST ANSWER IN KOREAN
 """
 
 if "agent" not in st.session_state:
@@ -53,7 +55,7 @@ if "agent" not in st.session_state:
         name="Life Coach Agent",
         instructions=instruction,
         model="gpt-4o-mini",
-        # model_settings=ModelSettings(tool_choice="required"),
+        model_settings=ModelSettings(tool_choice="required"),
         tools=[
             WebSearchTool(),
             FileSearchTool(
@@ -99,6 +101,9 @@ def update_status(status_container, event):
         "response.web_search_call.completed": ("✅ Web search complete.", "complete"),
         "response.web_search_call.in_progress": ("🔍  Starting web search...", "running"),
         "response.web_search_call.searching": ("🔍 Web search in progress...", "running"),
+        "response.file_search_call.completed": ("✅ File search completed.", "complete",),
+        "response.file_search_call.in_progress": ("🗂️ Starting file search...", "running",),
+        "response.file_search_call.searching": ("🗂️ File search in progress...", "running",),
         "response.completed": (" ", "complete"),
     }
 
@@ -154,13 +159,13 @@ if prompt:
                         vector_store_id=VECTOR_STORE_ID,
                         file_id=uploaded_file.id
                     )
-                    status.update(label="✅ File uploaded",state="complete")
+                    status.update(label="✅ File uploaded", state="complete")
 
     if prompt.text:
         with st.chat_message("human"):
-            st.write(prompt)
+            st.write(prompt.text)
 
-        asyncio.run(run_agent(prompt))
+        asyncio.run(run_agent(prompt.text))
 
 with st.sidebar:
     reset = st.button("Reset memory")
