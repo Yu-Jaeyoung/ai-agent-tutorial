@@ -1,9 +1,11 @@
+import base64
+
 import dotenv
 import asyncio
 import os
 import streamlit as st
 from openai import OpenAI
-from agents import Agent, Runner, SQLiteSession, WebSearchTool, FileSearchTool, ModelSettings
+from agents import Agent, Runner, SQLiteSession, WebSearchTool, FileSearchTool, ModelSettings, ImageGenerationTool
 
 dotenv.load_dotenv()
 
@@ -95,7 +97,8 @@ MUST ANSWER IN KOREAN
 """
 
 image_generation_instruction = """
-
+You are a Useful Image Generator.
+Make Image of requirements
 """
 
 if "goal_agent" not in st.session_state:
@@ -125,6 +128,25 @@ if "web_agent" not in st.session_state:
         ]
     )
 
+if "image_generation_agent" not in st.session_state:
+    st.session_state["image_generation_agent"] = Agent(
+        name="Image Generation Agent",
+        instructions=image_generation_instruction,
+        model="gpt-4o-mini",
+        model_settings=ModelSettings(tool_choice="required"),
+        tools=[
+            ImageGenerationTool(
+                tool_config={
+                    "type": "image_generation",
+                    "quality": "medium",
+                    "output_format": "jpeg",
+                    "moderation": "low",
+                    "partial_images": 1
+                }
+            )
+        ]
+    )
+
 if "final_coach_agent" not in st.session_state:
     st.session_state["final_coach_agent"] = Agent(
         name="Final Coach Agent",
@@ -134,6 +156,7 @@ if "final_coach_agent" not in st.session_state:
 
 goal_agent = st.session_state["goal_agent"]
 web_agent = st.session_state["web_agent"]
+image_generation_agent = st.session_state["image_generation_agent"]
 final_coach_agent = st.session_state["final_coach_agent"]
 
 if "session" not in st.session_state:
