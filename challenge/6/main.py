@@ -117,20 +117,14 @@ image_generation_instruction = """
 1. Role
 You are a creative image generation assistant.
 
-2. Input Context Rule
-- You will receive:
-  a) Image generation reason (GOAL_ACHIEVED or USER_REQUEST)
-  b) Image prompt extracted from the goal analysis
+2. Input Format
+- You will receive an image prompt under the [이미지 프롬프트] tag.
+- Use the prompt exactly as provided to generate the image.
 
-3. Generation Rules
-- GOAL_ACHIEVED: Generate a warm, joyful, and celebratory image that visually represents the user achieving their goal. Use uplifting colors and a congratulatory atmosphere.
-- USER_REQUEST: Generate an image that faithfully reflects the user's specific request related to their goal.
-
-4. Required Tool Usage
-- You must use ImageGenerationTool() to generate the image based on the provided prompt.
-- Do not describe the image in text. Just generate it.
+3. Required Tool Usage
+- You MUST call ImageGenerationTool() with the provided prompt.
+- Do NOT describe the image in text. Only generate it using the tool.
 """
-
 
 if "goal_agent" not in st.session_state:
     st.session_state["goal_agent"] = Agent(
@@ -210,7 +204,45 @@ async def paint_history():
 
                 if message["role"] == "assistant":
                     if message["type"] == "message":
-                        st.write(message["content"][0]["text"])
+                        for content in message["content"]:
+                            if content.get("type") == "text":
+                                st.write(content["text"])
+                            elif content.get("type") == "image_generation_call":  # ✅ 이미지 복원 추가
+                                image_data = base64.b64decode(content["result"])
+                                st.image(image_data, caption="🎨 당신을 위한 동기부여 이미지", use_container_width=True)
+
+
+def parse_image_prompt(goal_context: str) -> str:
+    fallback = (
+        "A motivational vision board with vibrant and inspiring visuals "
+        "representing personal growth, goals, and achievement. "
+        "Colorful, uplifting, and energetic atmosphere."
+    )
+
+    if "[이미지 프롬프트]" not in goal_context:
+        return fallback
+
+    try:
+        after_tag = goal_context.split("[이미지 프롬프트]")[1]
+        # 다음 섹션 태그가 나오기 전까지만 추출
+        next_tag_index = after_tag.find("[")
+        if next_tag_index != -1:
+            prompt_text = after_tag[:next_tag_index].strip()
+        else:
+            prompt_text = after_tag.strip()
+
+        # GOAL_ACHIEVED / USER_REQUEST 접두어 제거
+        for prefix in ["- GOAL_ACHIEVED:", "- USER_REQUEST:", "GOAL_ACHIEVED:", "USER_REQUEST:"]:
+            if prompt_text.startswith(prefix):
+                prompt_text = prompt_text[len(prefix):].strip()
+
+        # 따옴표 제거
+        prompt_text = prompt_text.strip('"').strip("'")
+
+        return prompt_text if prompt_text else fallback
+
+    except Exception:
+        return fallback
 
 
 def update_status(status_container, event, phase):
@@ -227,6 +259,10 @@ def update_status(status_container, event, phase):
         },
         "final": {
             "response.completed": ("✅ 최종 답변 생성 완료", "complete"),
+        },
+        "image": {
+            "response.image_generation_call.in_progress": ("🎨 이미지 생성 시작...", "running"),
+            "response.image_generation_call.completed": ("✅ 이미지 생성 완료", "complete"),
         },
     }
 
@@ -258,6 +294,7 @@ async def run_agent(message):
 
         goal_context = goal_context.strip() if goal_context.strip() else "파일에서 관련 목표 정보를 찾지 못했습니다."
         file_status.update(label="✅ 목표 파일 검색 및 정리 완료", state="complete")
+
         web_status = st.status("🔍 목표 달성 방법 웹 검색 중...", expanded=False)
         web_context = ""
 
@@ -277,10 +314,11 @@ async def run_agent(message):
 
         web_context = web_context.strip() if web_context.strip() else "웹 검색 결과를 요약하지 못했습니다."
         web_status.update(label="✅ 웹 검색 및 정리 완료", state="complete")
-        final_status = st.status("🧭 개인화 추천 정리 중...", expanded=False)
 
+        final_status = st.status("🧭 개인화 추천 정리 중...", expanded=False)
         response = ""
         text_placeholder = st.empty()
+
         final_stream = Runner.run_streamed(
             final_coach_agent,
             "아래 정보를 바탕으로 개인화 코칭 답변을 작성하세요.\n\n"
@@ -299,6 +337,28 @@ async def run_agent(message):
                     text_placeholder.write(response)
 
         final_status.update(label="✅ 개인화 코칭 답변 완료", state="complete")
+
+        image_prompt = parse_image_prompt(goal_context)
+        image_status = st.status("🎨 동기부여 이미지 생성 중...", expanded=False)
+
+        image_stream = Runner.run_streamed(
+            image_generation_agent,
+            f"[이미지 프롬프트]\n{image_prompt}\n\n"
+            f"[사용자 목표 요약]\n{goal_context[:500]}"
+        )
+
+        async for event in image_stream.stream_events():
+            if event.type == "raw_response_event":
+                update_status(image_status, event.data.type, "image")
+
+        for item in image_stream.raw_responses:
+            for output in item.output:
+                if output.type == "image_generation_call":
+                    image_data = base64.b64decode(output.result)
+                    st.image(image_data, caption="🎨 당신을 위한 동기부여 이미지", use_container_width=True)
+                    break
+
+        image_status.update(label="✅ 이미지 생성 완료", state="complete")
 
 
 prompt = st.chat_input(
