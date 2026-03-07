@@ -15,115 +15,132 @@ client = OpenAI()
 
 goal_extractor_instruction = """
 1. Role
-You are a goal extraction assistant.
+You are a Goal Extraction Assistant.
+Your sole responsibility is to identify and structure the user's goal from uploaded files and user input.
 
 2. Required Tool Usage
-- You must use FileSearchTool() to search uploaded files.
-- Identify the user's goal, current situation, constraints, and preferences from file evidence.
-- If no relevant file evidence exists, clearly say so.
+- You MUST use FileSearchTool() to search the uploaded files for evidence.
+- Extract the user's goal, current situation, constraints, and preferences based on file evidence.
+- If no relevant evidence is found in the files, explicitly state: "No relevant file evidence found."
 
 3. Output Format
-- Return Korean text in this exact structure:
-  [목표]
-  ...[현재 상황]
+- Return the result in the following exact structure (all section content in Korean):
+
+  [GOAL]
   ...
 
-  [제약/선호]
+  [CURRENT_SITUATION]
   ...
 
-  [핵심 요약]
+  [CONSTRAINTS_AND_PREFERENCES]
   ...
 
-  [이미지 생성 여부]
-  YES 또는 NO
+  [KEY_SUMMARY]
+  ...
 
-  [이미지 생성 사유]
-  - GOAL_ACHIEVED: 사용자가 목표를 달성했다는 내용이 있을 때
-  - USER_REQUEST: 사용자가 직접 이미지 생성을 요청했을 때
-  - NONE: 해당 없음
+  [IMAGE_GENERATION]
+  YES or NO
 
-  [이미지 프롬프트]
-  (이미지 생성이 YES인 경우에만 작성)
-  - GOAL_ACHIEVED: "Celebratory image for achieving the goal of {목표 내용}. Joyful, vibrant, congratulatory scene."
-  - USER_REQUEST: 사용자 요청 내용을 기반으로 한 영어 이미지 프롬프트
+  [IMAGE_GENERATION_REASON]
+  - GOAL_ACHIEVED: The user indicates they have achieved, completed, or succeeded in their goal.
+  - USER_REQUEST: The user explicitly requests image generation.
+  - NONE: Not applicable.
 
-- Keep it concise and factual.
+  [IMAGE_PROMPT]
+  (Only if IMAGE_GENERATION is YES)
+  - For GOAL_ACHIEVED: "Celebratory image for achieving the goal of {goal description}. Joyful, vibrant, congratulatory scene."
+  - For USER_REQUEST: An English image prompt based on the user's request.
 
 4. Image Generation Decision Rules
-- If the user says they have "달성", "완료", "성공", "해냈", "이뤘" regarding their goal → YES / GOAL_ACHIEVED
-- If the user explicitly requests an image or visual related to their goal → YES / USER_REQUEST
+- The user's input may be in Korean. You must also detect Korean achievement expressions such as: 달성했어, 성공했어, 해냈어, 완료했어, 끝냈어, 이뤘어, etc.
+- If the user's message contains achievement-related expressions (in any language) regarding their goal → YES / GOAL_ACHIEVED
+- If the user explicitly requests an image or visual (e.g., 이미지 만들어줘, 그림 그려줘, generate an image) → YES / USER_REQUEST
 - Otherwise → NO / NONE
+
+5. Important
+- Keep the output concise and factual.
+- Section content (descriptions, summaries) MUST be written in Korean.
 """
 
 web_research_instruction = """
 1. Role
-You are a web research assistant for coaching.
+You are a Web Research Assistant for life coaching.
+Your responsibility is to find up-to-date, evidence-based information to help the user achieve their goal.
 
 2. Required Tool Usage
-- You must use WebSearchTool() to find up-to-date information that helps the user achieve their goal.
-- Search practical methods, routines, and evidence-based tips.
-- Include 1-2 source URLs when you mention facts.
-- If WebSearchTool() is unavailable, say: "I cannot use the web search tool right now, so I must stop here."
+- You MUST use WebSearchTool() to search for current information.
+- Search for practical methods, routines, habits, and evidence-based tips relevant to the user's goal.
+- Include 1-2 source URLs for any factual claims.
+- If WebSearchTool() is unavailable or fails, respond with: "Web search tool is currently unavailable. Cannot proceed."
 
 3. Output Format
-- Return Korean text in this exact structure:
-  [웹 검색 키워드]
+- Return the result in the following exact structure (all section content in Korean):
+
+  [SEARCH_KEYWORDS]
   ...
 
-  [최신 근거 요약]
+  [EVIDENCE_SUMMARY]
   - ...
 
-  [목표 달성 방법]
+  [RECOMMENDED_METHODS]
   - ...
 
-  [출처]
+  [SOURCES]
   - ...
+
+4. Important
+- Focus on actionable and recent information (within the last 1-2 years if possible).
+- Section content MUST be written in Korean.
 """
 
 final_coach_instruction = """
 1. Role
-You are a kind and encouraging Life Coach.
+You are a warm, encouraging, and professional Life Coach.
+You synthesize goal analysis and web research to provide personalized coaching.
 
-2. Input Context Rule
-- You will receive:
-  a) User question
-  b) File-based goal summary
-  c) Web-based research summary
-- You must provide personalized recommendations grounded in that context.
+2. Input Context
+You will receive:
+  a) The user's question
+  b) A file-based goal summary (from Goal Extractor Agent)
+  c) A web-based research summary (from Web Research Agent)
+You MUST ground your recommendations in this context.
 
-3. Tone
+3. Tone & Style
 - Be warm, respectful, and supportive.
-- Acknowledge the user's feelings and effort first.
-- Do not criticize, make absolute judgments, or overpromise.
-- Always answer kindly.
+- Acknowledge the user's feelings and effort before giving advice.
+- Never criticize, make absolute judgments, or overpromise.
+- Use concrete, actionable statements instead of vague or abstract advice.
 
 4. Response Structure
-- Always respond in this order:
-  1) One line of empathy (brief summary of the user's situation)
-  2) 2-4 key personalized recommendations (short and clear)
-  3) One action the user can do immediately
-  4) One closing line of encouragement
-- Use concrete action statements, not abstract advice.
-- Keep it concise and checklist-friendly when possible.
+Always respond in this order:
+  1) Empathy statement: A brief one-line summary acknowledging the user's situation.
+  2) Personalized recommendations: 2-4 specific, actionable recommendations.
+  3) Immediate action: One thing the user can do right now.
+  4) Encouragement: One closing line of motivation.
+- Use bullet points or checklists when possible for clarity.
 
-5. Safety Guide
-- For high-risk topics (medical, legal, financial), provide only general information and recommend consulting a qualified professional.
-- If there are signs of self-harm or harm to others, prioritize immediate safety guidance and encourage professional crisis support.
+5. Safety Guidelines
+- For high-risk topics (medical, legal, financial): Provide only general information and strongly recommend consulting a qualified professional.
+- If there are signs of self-harm or harm to others: Prioritize immediate safety guidance and encourage professional crisis support.
 
-MUST ANSWER IN KOREAN
+6. Language Requirement (CRITICAL)
+- You MUST ALWAYS respond entirely in Korean (한국어).
+- This is non-negotiable regardless of the input language.
+- Every single word of your response must be in Korean.
 """
 
 image_generation_instruction = """
 1. Role
-You are a creative image generation assistant.
+You are a Creative Image Generation Assistant.
 
-2. Input Format
-- You will receive an image prompt under the [이미지 프롬프트] tag.
-- Use the prompt exactly as provided to generate the image.
+2. Input
+- You will receive an image prompt under the [IMAGE_PROMPT] tag.
+- Use the prompt exactly as provided.
 
 3. Required Tool Usage
-- You MUST call ImageGenerationTool() with the provided prompt.
+- You MUST call ImageGenerationTool() with the provided prompt to generate the image.
 - Do NOT describe the image in text. Only generate it using the tool.
+- Do NOT modify or translate the prompt unless it contains harmful content.
 """
 
 if "goal_agent" not in st.session_state:
@@ -186,8 +203,8 @@ final_coach_agent = st.session_state["final_coach_agent"]
 
 if "session" not in st.session_state:
     st.session_state["session"] = SQLiteSession(
-        "chat-history"
-        , "chat-gpt-clone-memory-db"
+        "chat-history",
+        "chat-gpt-clone-memory-db"
     )
 
 session = st.session_state["session"]
@@ -207,7 +224,7 @@ async def paint_history():
                         for content in message["content"]:
                             if content.get("type") == "text":
                                 st.write(content["text"])
-                            elif content.get("type") == "image_generation_call":  # ✅ 이미지 복원 추가
+                            elif content.get("type") == "image_generation_call":
                                 image_data = base64.b64decode(content["result"])
                                 st.image(image_data, caption="🎨 당신을 위한 동기부여 이미지", use_container_width=True)
 
@@ -219,24 +236,21 @@ def parse_image_prompt(goal_context: str) -> str:
         "Colorful, uplifting, and energetic atmosphere."
     )
 
-    if "[이미지 프롬프트]" not in goal_context:
+    if "[IMAGE_PROMPT]" not in goal_context:
         return fallback
 
     try:
-        after_tag = goal_context.split("[이미지 프롬프트]")[1]
-        # 다음 섹션 태그가 나오기 전까지만 추출
+        after_tag = goal_context.split("[IMAGE_PROMPT]")[1]
         next_tag_index = after_tag.find("[")
         if next_tag_index != -1:
             prompt_text = after_tag[:next_tag_index].strip()
         else:
             prompt_text = after_tag.strip()
 
-        # GOAL_ACHIEVED / USER_REQUEST 접두어 제거
         for prefix in ["- GOAL_ACHIEVED:", "- USER_REQUEST:", "GOAL_ACHIEVED:", "USER_REQUEST:"]:
             if prompt_text.startswith(prefix):
                 prompt_text = prompt_text[len(prefix):].strip()
 
-        # 따옴표 제거
         prompt_text = prompt_text.strip('"').strip("'")
 
         return prompt_text if prompt_text else fallback
@@ -245,12 +259,28 @@ def parse_image_prompt(goal_context: str) -> str:
         return fallback
 
 
-def update_status(status_container, event, phase):
+def should_generate_image(goal_context: str) -> bool:
+    """Check if the goal extractor decided image generation is needed."""
+    if "[IMAGE_GENERATION]" not in goal_context:
+        return False
+    try:
+        after_tag = goal_context.split("[IMAGE_GENERATION]")[1]
+        next_tag_index = after_tag.find("[")
+        if next_tag_index != -1:
+            value = after_tag[:next_tag_index].strip()
+        else:
+            value = after_tag.strip()
+        return value.upper().startswith("YES")
+    except Exception:
+        return False
+
+
+def update_status(status_container, event_type, phase):
     phase_status_messages = {
         "file": {
-            "response.file_search_call.in_progress": ("🗂️ 목표 파일 검색 시작...", "running"),
+            "response.file_search_call.in_progress": ("🗂️ 목표 파일 검색 중...", "running"),
             "response.file_search_call.searching": ("🗂️ 목표 파일 검색 중...", "running"),
-            "response.file_search_call.completed": ("✅ 목표 파일 검색 완료", "complete"),
+            "response.file_search_call.completed": ("✅ 파일 검색 완료", "complete"),
         },
         "web": {
             "response.web_search_call.in_progress": ("🔍 웹 검색 시작...", "running"),
@@ -258,17 +288,17 @@ def update_status(status_container, event, phase):
             "response.web_search_call.completed": ("✅ 웹 검색 완료", "complete"),
         },
         "final": {
-            "response.completed": ("✅ 최종 답변 생성 완료", "complete"),
+            "response.completed": ("✅ 코칭 응답 준비 완료", "complete"),
         },
         "image": {
-            "response.image_generation_call.in_progress": ("🎨 이미지 생성 시작...", "running"),
+            "response.image_generation_call.in_progress": ("🎨 이미지 생성 중...", "running"),
             "response.image_generation_call.completed": ("✅ 이미지 생성 완료", "complete"),
         },
     }
 
     phase_messages = phase_status_messages.get(phase, {})
-    if event in phase_messages:
-        label, state = phase_messages[event]
+    if event_type in phase_messages:
+        label, state = phase_messages[event_type]
         status_container.update(label=label, state=state)
 
 
@@ -277,12 +307,13 @@ asyncio.run(paint_history())
 
 async def run_agent(message):
     with st.chat_message("ai"):
+        # Phase 1: Goal Extraction
         file_status = st.status("🗂️ 목표 파일 검색 중...", expanded=False)
         goal_context = ""
 
         goal_stream = Runner.run_streamed(
             goal_agent,
-            f"사용자 질문: {message}",
+            f"User question: {message}",
         )
 
         async for event in goal_stream.stream_events():
@@ -292,17 +323,18 @@ async def run_agent(message):
                 if event.data.type == "response.output_text.delta":
                     goal_context += event.data.delta
 
-        goal_context = goal_context.strip() if goal_context.strip() else "파일에서 관련 목표 정보를 찾지 못했습니다."
-        file_status.update(label="✅ 목표 파일 검색 및 정리 완료", state="complete")
+        goal_context = goal_context.strip() if goal_context.strip() else "No relevant goal information found in files."
+        file_status.update(label="✅ 목표 파일 검색 완료", state="complete")
 
+        # Phase 2: Web Research
         web_status = st.status("🔍 목표 달성 방법 웹 검색 중...", expanded=False)
         web_context = ""
 
         web_stream = Runner.run_streamed(
             web_agent,
-            "사용자 질문을 바탕으로 목표 달성에 필요한 정보를 조사하세요.\n\n"
-            f"[사용자 질문]\n{message}\n\n"
-            f"[파일 기반 목표 요약]\n{goal_context}",
+            "Research information needed to achieve the user's goal based on the following.\n\n"
+            f"[USER_QUESTION]\n{message}\n\n"
+            f"[FILE_BASED_GOAL_SUMMARY]\n{goal_context}",
         )
 
         async for event in web_stream.stream_events():
@@ -312,19 +344,21 @@ async def run_agent(message):
                 if event.data.type == "response.output_text.delta":
                     web_context += event.data.delta
 
-        web_context = web_context.strip() if web_context.strip() else "웹 검색 결과를 요약하지 못했습니다."
-        web_status.update(label="✅ 웹 검색 및 정리 완료", state="complete")
+        web_context = web_context.strip() if web_context.strip() else "Could not summarize web search results."
+        web_status.update(label="✅ 웹 검색 완료", state="complete")
 
-        final_status = st.status("🧭 개인화 추천 정리 중...", expanded=False)
+        # Phase 3: Final Coaching Response
+        final_status = st.status("🧭 맞춤형 코칭 준비 중...", expanded=False)
         response = ""
         text_placeholder = st.empty()
 
         final_stream = Runner.run_streamed(
             final_coach_agent,
-            "아래 정보를 바탕으로 개인화 코칭 답변을 작성하세요.\n\n"
-            f"[사용자 질문]\n{message}\n\n"
-            f"[파일 기반 목표 요약]\n{goal_context}\n\n"
-            f"[웹 검색 요약]\n{web_context}",
+            "Provide a personalized coaching response based on the information below.\n\n"
+            f"[USER_QUESTION]\n{message}\n\n"
+            f"[FILE_BASED_GOAL_SUMMARY]\n{goal_context}\n\n"
+            f"[WEB_RESEARCH_SUMMARY]\n{web_context}\n\n"
+            "IMPORTANT: Your entire response MUST be in Korean.",
             session=session
         )
 
@@ -336,61 +370,69 @@ async def run_agent(message):
                     response += event.data.delta
                     text_placeholder.write(response)
 
-        final_status.update(label="✅ 개인화 코칭 답변 완료", state="complete")
+        final_status.update(label="✅ 코칭 응답 준비 완료", state="complete")
 
-        image_prompt = parse_image_prompt(goal_context)
-        image_status = st.status("🎨 동기부여 이미지 생성 중...", expanded=False)
+        # Phase 4: Image Generation (conditional)
+        if should_generate_image(goal_context):
+            image_prompt = parse_image_prompt(goal_context)
+            image_status = st.status("🎨 동기부여 이미지 생성 중...", expanded=False)
 
-        image_stream = Runner.run_streamed(
-            image_generation_agent,
-            f"[이미지 프롬프트]\n{image_prompt}\n\n"
-            f"[사용자 목표 요약]\n{goal_context[:500]}"
-        )
+            image_stream = Runner.run_streamed(
+                image_generation_agent,
+                f"[IMAGE_PROMPT]\n{image_prompt}\n\n"
+                f"[USER_GOAL_SUMMARY]\n{goal_context[:500]}"
+            )
 
-        async for event in image_stream.stream_events():
-            if event.type == "raw_response_event":
-                update_status(image_status, event.data.type, "image")
+            async for event in image_stream.stream_events():
+                if event.type == "raw_response_event":
+                    update_status(image_status, event.data.type, "image")
 
-        for item in image_stream.raw_responses:
-            for output in item.output:
-                if output.type == "image_generation_call":
-                    image_data = base64.b64decode(output.result)
-                    st.image(image_data, caption="🎨 당신을 위한 동기부여 이미지", use_container_width=True)
+            image_rendered = False
+            for item in image_stream.raw_responses:
+                if image_rendered:
                     break
+                for output in item.output:
+                    if output.type == "image_generation_call":
+                        image_data = base64.b64decode(output.result)
+                        st.image(image_data, caption="🎨 당신을 위한 동기부여 이미지", use_container_width=True)
+                        image_rendered = True
+                        break
 
-        image_status.update(label="✅ 이미지 생성 완료", state="complete")
+            image_status.update(label="✅ 이미지 생성 완료", state="complete")
 
 
 prompt = st.chat_input(
-    "Write a message for your assistant"
-    , accept_file=True,
+    "코치에게 메시지를 입력하세요",
+    accept_file="multiple",
     file_type=["txt"]
 )
 
 if prompt:
-    for file in prompt.files:
-        if file.type.startswith("text/"):
-            with st.chat_message("ai"):
-                with st.status("⏳ Uploading file...") as status:
-                    uploaded_file = client.files.create(
-                        file=(file.name, file.getvalue()),
-                        purpose="user_data"
-                    )
+    if hasattr(prompt, "files") and prompt.files:
+        for file in prompt.files:
+            if file.type.startswith("text/"):
+                with st.chat_message("ai"):
+                    with st.status("⏳ 파일 업로드 중...") as status:
+                        uploaded_file = client.files.create(
+                            file=(file.name, file.getvalue()),
+                            purpose="user_data"
+                        )
 
-                    status.update(label="⏳ Attaching file...")
-                    client.vector_stores.files.create(
-                        vector_store_id=VECTOR_STORE_ID,
-                        file_id=uploaded_file.id
-                    )
-                    status.update(label="✅ File uploaded", state="complete")
+                        status.update(label="⏳ 파일 첨부 중...")
+                        client.vector_stores.files.create(
+                            vector_store_id=VECTOR_STORE_ID,
+                            file_id=uploaded_file.id
+                        )
+                        status.update(label="✅ 파일 업로드 완료", state="complete")
 
-    if prompt.text:
+    user_text = prompt.text if hasattr(prompt, "text") else str(prompt)
+    if user_text:
         with st.chat_message("human"):
-            st.write(prompt.text)
+            st.write(user_text)
 
-        asyncio.run(run_agent(prompt.text))
+        asyncio.run(run_agent(user_text))
 
 with st.sidebar:
-    reset = st.button("Reset memory")
+    reset = st.button("메모리 초기화")
     if reset:
         asyncio.run(session.clear_session())
