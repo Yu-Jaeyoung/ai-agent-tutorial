@@ -25,9 +25,7 @@ You are a goal extraction assistant.
 3. Output Format
 - Return Korean text in this exact structure:
   [목표]
-  ...
-
-  [현재 상황]
+  ...[현재 상황]
   ...
 
   [제약/선호]
@@ -35,7 +33,26 @@ You are a goal extraction assistant.
 
   [핵심 요약]
   ...
+
+  [이미지 생성 여부]
+  YES 또는 NO
+
+  [이미지 생성 사유]
+  - GOAL_ACHIEVED: 사용자가 목표를 달성했다는 내용이 있을 때
+  - USER_REQUEST: 사용자가 직접 이미지 생성을 요청했을 때
+  - NONE: 해당 없음
+
+  [이미지 프롬프트]
+  (이미지 생성이 YES인 경우에만 작성)
+  - GOAL_ACHIEVED: "Celebratory image for achieving the goal of {목표 내용}. Joyful, vibrant, congratulatory scene."
+  - USER_REQUEST: 사용자 요청 내용을 기반으로 한 영어 이미지 프롬프트
+
 - Keep it concise and factual.
+
+4. Image Generation Decision Rules
+- If the user says they have "달성", "완료", "성공", "해냈", "이뤘" regarding their goal → YES / GOAL_ACHIEVED
+- If the user explicitly requests an image or visual related to their goal → YES / USER_REQUEST
+- Otherwise → NO / NONE
 """
 
 web_research_instruction = """
@@ -97,9 +114,23 @@ MUST ANSWER IN KOREAN
 """
 
 image_generation_instruction = """
-You are a Useful Image Generator.
-Make Image of requirements
+1. Role
+You are a creative image generation assistant.
+
+2. Input Context Rule
+- You will receive:
+  a) Image generation reason (GOAL_ACHIEVED or USER_REQUEST)
+  b) Image prompt extracted from the goal analysis
+
+3. Generation Rules
+- GOAL_ACHIEVED: Generate a warm, joyful, and celebratory image that visually represents the user achieving their goal. Use uplifting colors and a congratulatory atmosphere.
+- USER_REQUEST: Generate an image that faithfully reflects the user's specific request related to their goal.
+
+4. Required Tool Usage
+- You must use ImageGenerationTool() to generate the image based on the provided prompt.
+- Do not describe the image in text. Just generate it.
 """
+
 
 if "goal_agent" not in st.session_state:
     st.session_state["goal_agent"] = Agent(
