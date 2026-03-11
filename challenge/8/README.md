@@ -7,18 +7,6 @@
 
 OpenAI Agents SDK를 사용해 식당 상담용 멀티 에이전트 챗봇을 구성한다.
 
-## Core Requirements
-
-- 에이전트는 `Triage`, `Menu`, `Order`, `Reservation`, `Complaints` 5개로 구성한다.
-- `Triage Agent`가 사용자의 첫 진입점이다.
-- `Triage Agent`는 사용자 의도를 판단하고 OpenAI SDK `handoff`로 적절한 에이전트에 연결한다.
-- `Menu`, `Order`, `Reservation`, `Complaints` 에이전트는 자신의 범위를 벗어난 요청을 받으면 다시 적절한 에이전트로 handoff한다.
-- 각 에이전트의 동작 기준은 `instruction.py`에 정의된 instructions를 사용한다.
-- `Menu Agent`는 샘플 메뉴 데이터 `menu_list`를 기반으로 메뉴 관련 질문에 답한다.
-- 입력과 출력 모두 guardrail을 적용한다.
-
-## Settled Decisions
-
 ### Agent Instructions
 
 - instruction은 OpenAI SDK `Agent(..., instructions=...)`에 바로 넣을 수 있는 문자열 형태로 유지한다.
