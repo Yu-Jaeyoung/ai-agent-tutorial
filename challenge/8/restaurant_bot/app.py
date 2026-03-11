@@ -5,6 +5,8 @@ from typing import Any
 import dotenv
 import streamlit as st
 from agents import Runner, SQLiteSession
+from agents.exceptions import InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered
+from pydantic import BaseModel
 
 from .bot_agents import triage_agent
 from .handoffs import consume_handoff_events
@@ -17,7 +19,8 @@ SESSION_DB_PATH = BASE_DIR / "restaurant-bot-memory.db"
 
 HANDOFF_HISTORY_SESSION_KEY = "handoff_history"
 CHAT_TURNS_SESSION_KEY = "chat_turns"
-TEXT_PLACEHOLDER_SESSION_KEY = "text_placeholder"
+AGENT_RUNNING_SESSION_KEY = "agent_running"
+PENDING_MESSAGES_SESSION_KEY = "pending_messages"
 
 
 def get_session() -> SQLiteSession:
@@ -37,8 +40,49 @@ def get_chat_turns() -> list[dict[str, Any]]:
     return st.session_state.setdefault(CHAT_TURNS_SESSION_KEY, [])
 
 
+def get_pending_messages() -> list[str]:
+    return st.session_state.setdefault(PENDING_MESSAGES_SESSION_KEY, [])
+
+
+def is_agent_running() -> bool:
+    return st.session_state.setdefault(AGENT_RUNNING_SESSION_KEY, False)
+
+
+def set_agent_running(is_running: bool) -> None:
+    st.session_state[AGENT_RUNNING_SESSION_KEY] = is_running
+
+
+def append_chat_turn(user_message: str) -> int:
+    turns = get_chat_turns()
+    turns.append(
+        {
+            "user": user_message,
+            "assistant": "",
+            "handoffs": [],
+        }
+    )
+    return len(turns) - 1
+
+
+def update_chat_turn(
+    turn_index: int,
+    *,
+    assistant: str | None = None,
+    handoffs: list[dict[str, str]] | None = None,
+) -> None:
+    turns = get_chat_turns()
+    if not 0 <= turn_index < len(turns):
+        return
+
+    if assistant is not None:
+        turns[turn_index]["assistant"] = assistant
+    if handoffs is not None:
+        turns[turn_index]["handoffs"] = list(handoffs)
+
+
 def clear_ui_state() -> None:
-    st.session_state.pop(TEXT_PLACEHOLDER_SESSION_KEY, None)
+    st.session_state[AGENT_RUNNING_SESSION_KEY] = False
+    st.session_state[PENDING_MESSAGES_SESSION_KEY] = []
     st.session_state[HANDOFF_HISTORY_SESSION_KEY] = []
     st.session_state[CHAT_TURNS_SESSION_KEY] = []
     st.session_state["handoff_events"] = []
@@ -88,6 +132,30 @@ def extract_assistant_text(message: dict) -> str:
     return "\n".join(texts)
 
 
+def build_assistant_message_item(text: str) -> dict[str, Any]:
+    return {
+        "role": "assistant",
+        "type": "message",
+        "content": [
+            {
+                "type": "output_text",
+                "text": text,
+            }
+        ],
+    }
+
+
+def extract_guardrail_fallback_message(
+    exc: InputGuardrailTripwireTriggered | OutputGuardrailTripwireTriggered,
+) -> str:
+    output_info = exc.guardrail_result.output.output_info
+    if isinstance(output_info, BaseModel):
+        return getattr(output_info, "fallback_message", "") or "요청을 처리할 수 없어요."
+    if isinstance(output_info, dict):
+        return output_info.get("fallback_message") or "요청을 처리할 수 없어요."
+    return "요청을 처리할 수 없어요."
+
+
 async def hydrate_chat_turns(session: SQLiteSession) -> None:
     if get_chat_turns():
         return
@@ -126,6 +194,38 @@ async def hydrate_chat_turns(session: SQLiteSession) -> None:
         assistant_index += 1
 
 
+def normalize_session_message_item(message: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(message)
+    content = normalized.get("content")
+    if not isinstance(content, list):
+        return normalized
+
+    normalized_content: list[Any] = []
+    for item in content:
+        if not isinstance(item, dict):
+            normalized_content.append(item)
+            continue
+
+        normalized_item = dict(item)
+        if normalized_item.get("type") == "text":
+            normalized_item["type"] = "output_text"
+        normalized_content.append(normalized_item)
+
+    normalized["content"] = normalized_content
+    return normalized
+
+
+async def normalize_session_history(session: SQLiteSession) -> None:
+    items = await session.get_items()
+    normalized_items = [normalize_session_message_item(item) for item in items]
+
+    if normalized_items == items:
+        return
+
+    await session.clear_session()
+    await session.add_items(normalized_items)
+
+
 def render_chat_turns() -> None:
     for turn in get_chat_turns():
         with st.chat_message("user"):
@@ -140,6 +240,7 @@ def render_chat_turns() -> None:
 async def run_agent(
     message: str,
     session: SQLiteSession,
+    turn_index: int,
 ):
     consume_handoff_events()
 
@@ -148,8 +249,6 @@ async def run_agent(
         text_placeholder = st.empty()
         response = ""
         turn_handoffs: list[dict[str, str]] = []
-
-        st.session_state[TEXT_PLACEHOLDER_SESSION_KEY] = text_placeholder
 
         try:
             stream = Runner.run_streamed(
@@ -162,6 +261,7 @@ async def run_agent(
                 new_handoffs = consume_handoff_events()
                 if new_handoffs:
                     turn_handoffs.extend(new_handoffs)
+                    update_chat_turn(turn_index, handoffs=turn_handoffs)
                     render_handoff_trace(turn_handoffs, handoff_placeholder)
 
                 if event.type != "raw_response_event":
@@ -169,30 +269,50 @@ async def run_agent(
 
                 if event.data.type == "response.output_text.delta":
                     response += event.data.delta
+                    update_chat_turn(turn_index, assistant=response)
                     text_placeholder.write(response.replace("$", "\\$"))
 
             new_handoffs = consume_handoff_events()
             if new_handoffs:
                 turn_handoffs.extend(new_handoffs)
+                update_chat_turn(turn_index, handoffs=turn_handoffs)
                 render_handoff_trace(turn_handoffs, handoff_placeholder)
 
             get_handoff_history().append(turn_handoffs)
-            get_chat_turns().append(
-                {
-                    "user": message,
-                    "assistant": response,
-                    "handoffs": turn_handoffs,
-                }
+            update_chat_turn(
+                turn_index,
+                assistant=response,
+                handoffs=turn_handoffs,
             )
+        except (InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered) as exc:
+            fallback_message = extract_guardrail_fallback_message(exc)
+            consume_handoff_events()
+            handoff_placeholder.empty()
+            text_placeholder.empty()
+            text_placeholder.write(fallback_message)
+            get_handoff_history().append([])
+            update_chat_turn(
+                turn_index,
+                assistant=fallback_message,
+                handoffs=[],
+            )
+            await session.add_items([build_assistant_message_item(fallback_message)])
         except Exception as exc:
-            text_placeholder.error(f"에이전트 실행 중 오류가 발생했습니다: {exc}")
+            error_message = f"에이전트 실행 중 오류가 발생했습니다: {exc}"
+            text_placeholder.error(error_message)
+            get_handoff_history().append(turn_handoffs)
+            update_chat_turn(
+                turn_index,
+                assistant=error_message,
+                handoffs=turn_handoffs,
+            )
 
 
 def render_sidebar(session: SQLiteSession) -> None:
     with st.sidebar:
         st.subheader("Debug")
 
-        reset = st.button("Reset memory")
+        reset = st.button("Reset memory", disabled=is_agent_running())
         if reset:
             asyncio.run(session.clear_session())
             clear_ui_state()
@@ -214,21 +334,47 @@ def main():
         layout="centered",
     )
     st.title("Restaurant Bot")
-    st.caption("Triage Agent를 시작점으로 Menu, Order, Reservation Agent를 handoff로 테스트합니다.")
+    st.caption(
+        "메뉴 확인, 주문, 예약, 불편 사항 접수를 도와드려요."
+    )
 
     session = get_session()
 
+    asyncio.run(normalize_session_history(session))
     asyncio.run(hydrate_chat_turns(session))
     render_chat_turns()
     render_sidebar(session)
 
-    message = st.chat_input("메뉴, 주문, 예약 관련 요청을 입력하세요.")
+    message = st.chat_input(
+        "메뉴, 주문, 예약, 불편 사항 관련 요청을 입력하세요.",
+        disabled=is_agent_running(),
+    )
 
     if message:
-        if TEXT_PLACEHOLDER_SESSION_KEY in st.session_state:
-            st.session_state[TEXT_PLACEHOLDER_SESSION_KEY].empty()
+        get_pending_messages().append(message)
+        set_agent_running(True)
+        st.rerun()
 
-        with st.chat_message("user"):
-            st.write(message)
+    if not is_agent_running():
+        if get_pending_messages():
+            set_agent_running(True)
+            st.rerun()
+        return
 
-        asyncio.run(run_agent(message, session))
+    pending_messages = get_pending_messages()
+    if not pending_messages:
+        set_agent_running(False)
+        return
+
+    next_message = pending_messages.pop(0)
+    turn_index = append_chat_turn(next_message)
+
+    with st.chat_message("user"):
+        st.write(next_message)
+
+    try:
+        asyncio.run(run_agent(next_message, session, turn_index))
+    finally:
+        set_agent_running(bool(get_pending_messages()))
+
+    st.rerun()
