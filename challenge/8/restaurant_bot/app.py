@@ -12,6 +12,7 @@ from .instruction import menu_list
 dotenv.load_dotenv()
 
 HANDOFF_HISTORY_SESSION_KEY = "handoff_history"
+CHAT_TURNS_SESSION_KEY = "chat_turns"
 TEXT_PLACEHOLDER_SESSION_KEY = "text_placeholder"
 
 
@@ -28,25 +29,19 @@ def get_handoff_history() -> list[list[dict[str, str]]]:
     return st.session_state.setdefault(HANDOFF_HISTORY_SESSION_KEY, [])
 
 
+def get_chat_turns() -> list[dict[str, Any]]:
+    return st.session_state.setdefault(CHAT_TURNS_SESSION_KEY, [])
+
+
 def clear_ui_state() -> None:
     st.session_state.pop(TEXT_PLACEHOLDER_SESSION_KEY, None)
     st.session_state[HANDOFF_HISTORY_SESSION_KEY] = []
+    st.session_state[CHAT_TURNS_SESSION_KEY] = []
     st.session_state["handoff_events"] = []
 
 
 def format_handoff_event(event: dict[str, str]) -> str:
-    title = f"[{event['from_agent_name']} -> {event['to_agent_name']}]"
-    details = [
-        event.get("reason", "").strip(),
-        event.get("issue_type", "").strip(),
-        event.get("issue_description", "").strip(),
-    ]
-    details = [detail for detail in details if detail]
-
-    if not details:
-        return title
-
-    return f"{title} {' | '.join(details)}"
+    return f"[{event['from_agent_name']} -> {event['to_agent_name']}]"
 
 
 def render_handoff_trace(
@@ -57,9 +52,8 @@ def render_handoff_trace(
         if not events:
             return
 
-        st.markdown("**Handoff Trace**")
         for event in events:
-            st.caption(format_handoff_event(event))
+            st.markdown(f"**{format_handoff_event(event)}**")
         return
 
     placeholder.empty()
@@ -67,9 +61,8 @@ def render_handoff_trace(
         return
 
     with placeholder.container():
-        st.markdown("**Handoff Trace**")
         for event in events:
-            st.caption(format_handoff_event(event))
+            st.markdown(f"**{format_handoff_event(event)}**")
 
 
 def extract_assistant_text(message: dict) -> str:
@@ -91,34 +84,53 @@ def extract_assistant_text(message: dict) -> str:
     return "\n".join(texts)
 
 
-async def paint_history(session: SQLiteSession):
+async def hydrate_chat_turns(session: SQLiteSession) -> None:
+    if get_chat_turns():
+        return
+
     messages = await session.get_items()
     handoff_history = get_handoff_history()
     assistant_index = 0
+    current_user_message: str | None = None
 
     for message in messages:
         if "role" not in message:
             continue
 
-        with st.chat_message(message["role"]):
-            if message["role"] == "user":
-                st.write(message["content"])
-                continue
+        if message["role"] == "user":
+            current_user_message = message["content"]
+            continue
 
-            if message.get("type") != "message":
-                continue
+        if message.get("type") != "message":
+            continue
 
-            turn_handoffs = []
-            if assistant_index < len(handoff_history):
-                turn_handoffs = handoff_history[assistant_index]
+        turn_handoffs = []
+        if assistant_index < len(handoff_history):
+            turn_handoffs = handoff_history[assistant_index]
 
-            render_handoff_trace(turn_handoffs)
+        assistant_text = extract_assistant_text(message)
+        if current_user_message is not None:
+            get_chat_turns().append(
+                {
+                    "user": current_user_message,
+                    "assistant": assistant_text,
+                    "handoffs": turn_handoffs,
+                }
+            )
+            current_user_message = None
 
-            assistant_text = extract_assistant_text(message)
-            if assistant_text:
-                st.write(assistant_text.replace("$", "\\$"))
+        assistant_index += 1
 
-            assistant_index += 1
+
+def render_chat_turns() -> None:
+    for turn in get_chat_turns():
+        with st.chat_message("user"):
+            st.write(turn["user"])
+
+        with st.chat_message("assistant"):
+            render_handoff_trace(turn["handoffs"])
+            if turn["assistant"]:
+                st.write(turn["assistant"].replace("$", "\\$"))
 
 
 async def run_agent(
@@ -161,6 +173,13 @@ async def run_agent(
                 render_handoff_trace(turn_handoffs, handoff_placeholder)
 
             get_handoff_history().append(turn_handoffs)
+            get_chat_turns().append(
+                {
+                    "user": message,
+                    "assistant": response,
+                    "handoffs": turn_handoffs,
+                }
+            )
         except Exception as exc:
             text_placeholder.error(f"에이전트 실행 중 오류가 발생했습니다: {exc}")
 
@@ -195,7 +214,8 @@ def main():
 
     session = get_session()
 
-    asyncio.run(paint_history(session))
+    asyncio.run(hydrate_chat_turns(session))
+    render_chat_turns()
     render_sidebar(session)
 
     message = st.chat_input("메뉴, 주문, 예약 관련 요청을 입력하세요.")
