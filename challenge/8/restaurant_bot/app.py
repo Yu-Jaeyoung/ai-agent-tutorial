@@ -13,7 +13,7 @@ from .instruction import menu_list
 dotenv.load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-SESSION_DB_PATH = BASE_DIR / "customer-support-memory.db"
+SESSION_DB_PATH = BASE_DIR / "restaurant-bot-memory.db"
 
 HANDOFF_HISTORY_SESSION_KEY = "handoff_history"
 CHAT_TURNS_SESSION_KEY = "chat_turns"
