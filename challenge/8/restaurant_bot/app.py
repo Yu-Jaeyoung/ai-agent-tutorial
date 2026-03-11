@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import dotenv
@@ -11,6 +12,9 @@ from .instruction import menu_list
 
 dotenv.load_dotenv()
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+SESSION_DB_PATH = BASE_DIR / "customer-support-memory.db"
+
 HANDOFF_HISTORY_SESSION_KEY = "handoff_history"
 CHAT_TURNS_SESSION_KEY = "chat_turns"
 TEXT_PLACEHOLDER_SESSION_KEY = "text_placeholder"
@@ -20,7 +24,7 @@ def get_session() -> SQLiteSession:
     if "session" not in st.session_state:
         st.session_state["session"] = SQLiteSession(
             "chat-history",
-            "customer-support-memory.db",
+            str(SESSION_DB_PATH),
         )
     return st.session_state["session"]
 
