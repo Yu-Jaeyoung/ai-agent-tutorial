@@ -1,0 +1,14 @@
+{
+  "include": [
+    "challenge/8"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".venv"
+  ],
+  "executionEnvironments": [
+    {
+      "root": "challenge/8"
+    }
+  ]
+}
