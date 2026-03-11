@@ -1,7 +1,9 @@
 from pydantic import BaseModel
 
 
-class UserAccountContext(BaseModel):
-    customer_id: int
-    name: str
-    tier: str = "basic"
+# use on_handoff to run function if handoff happens.
+# ex: show where handoff happens in UI
+class HandoffData(BaseModel):
+    issue_type: str | None = None
+    issue_description: str | None = None
+    reason: str | None = None

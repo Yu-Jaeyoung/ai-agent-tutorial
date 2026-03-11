@@ -2,26 +2,11 @@ import asyncio
 
 import dotenv
 import streamlit as st
-from agents import Runner, SQLiteSession, RunContextWrapper, function_tool
+from agents import Runner, SQLiteSession
 
 from .bot_agents import triage_agent
-from .models import UserAccountContext
 
 dotenv.load_dotenv()
-
-
-@function_tool
-def get_user_tier(wrapper: RunContextWrapper[UserAccountContext]):
-    return f"The user {wrapper.context.customer_id} has a {wrapper.context.tier} account."
-
-
-def get_user_account_context() -> UserAccountContext:
-    return UserAccountContext(
-        customer_id=1,
-        name="nico",
-        tier="basic",
-    )
-
 
 def get_session() -> SQLiteSession:
     if "session" not in st.session_state:
@@ -48,7 +33,6 @@ async def paint_history(session: SQLiteSession):
 async def run_agent(
     message: str,
     session: SQLiteSession,
-    context: UserAccountContext,
 ):
     with st.chat_message("ai"):
         text_placeholder = st.empty()
@@ -60,7 +44,6 @@ async def run_agent(
             triage_agent,
             message,
             session=session,
-            context=context,
         )
 
         async for event in stream.stream_events():
@@ -74,7 +57,6 @@ async def run_agent(
 
 def main():
     session = get_session()
-    user_account_ctx = get_user_account_context()
 
     asyncio.run(paint_history(session))
 
@@ -87,7 +69,7 @@ def main():
         with st.chat_message("human"):
             st.write(message)
 
-        asyncio.run(run_agent(message, session, user_account_ctx))
+        asyncio.run(run_agent(message, session))
 
     with st.sidebar:
         reset = st.button("Reset memory")

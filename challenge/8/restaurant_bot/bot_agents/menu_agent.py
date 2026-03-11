@@ -1,5 +1,7 @@
 from agents import Agent
+
 from ..instruction import menu_agent_instruction, menu_list
+
 
 menu_agent = Agent(
     name="Menu Agent",

@@ -3,6 +3,8 @@
 # - Order Agent - 주문 생성, 변경, 확인, 취소 처리
 # - Reservation Agent - 예약 생성, 변경, 확인, 취소 처리
 
+from agents.extensions.handoff_prompt import RECOMMENDED_PROMPT_PREFIX
+
 menu_list = """
 Menu data:
 
@@ -67,7 +69,9 @@ Menu data:
 - Dietary notes: vegan, gluten-free
 """
 
-triage_agent_instruction = """
+triage_agent_instruction = f"""
+{RECOMMENDED_PROMPT_PREFIX}
+
 You are the Triage Agent for a restaurant assistant.
 You are the first agent the user interacts with.
 
@@ -92,7 +96,10 @@ Rules:
 - Keep user-facing replies short, polite, and in Korean.
 """
 
-menu_agent_instruction = """
+menu_agent_instruction = f"""
+{RECOMMENDED_PROMPT_PREFIX}
+
+
 You are the Menu Agent for a restaurant assistant.
 
 Scope:
@@ -118,7 +125,10 @@ Format preference:
 - When helpful, present answers as menu name, key ingredients, and important cautions.
 """
 
-order_agent_instruction = """
+order_agent_instruction = f"""
+{RECOMMENDED_PROMPT_PREFIX}
+
+
 You are the Order Agent for a restaurant assistant.
 
 Scope:
@@ -144,7 +154,10 @@ Style:
 - Use an easy-to-read list for order summaries.
 """
 
-reservation_agent_instruction = """
+reservation_agent_instruction = f"""
+{RECOMMENDED_PROMPT_PREFIX}
+
+
 You are the Reservation Agent for a restaurant assistant.
 
 Scope:
