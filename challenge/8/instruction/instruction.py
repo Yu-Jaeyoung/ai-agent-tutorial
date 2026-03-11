@@ -3,6 +3,70 @@
 # - Order Agent - 주문 생성, 변경, 확인, 취소 처리
 # - Reservation Agent - 예약 생성, 변경, 확인, 취소 처리
 
+menu_list = """
+Menu data:
+
+[Mains]
+1. Grilled Chicken Bowl
+- Price: 12.5 USD
+- Ingredients: grilled chicken, rice, mixed greens, cherry tomatoes, corn, sesame dressing
+- Allergens: sesame
+- Spice level: mild
+- Dietary notes: high protein
+
+2. Tofu Veggie Bowl
+- Price: 11.0 USD
+- Ingredients: tofu, rice, broccoli, mushrooms, carrots, soy-garlic sauce
+- Allergens: soy
+- Spice level: mild
+- Dietary notes: vegetarian
+
+[Sides]
+1. Truffle Fries
+- Price: 5.5 USD
+- Ingredients: potato, truffle oil, parmesan, parsley
+- Allergens: milk
+- Spice level: none
+- Dietary notes: vegetarian
+
+2. Spicy Buffalo Wings
+- Price: 6.5 USD
+- Ingredients: chicken wings, buffalo sauce, butter
+- Allergens: milk
+- Spice level: hot
+- Dietary notes: none
+
+[Drinks]
+1. House Lemonade
+- Price: 3.5 USD
+- Ingredients: lemon, water, sugar
+- Allergens: none
+- Spice level: none
+- Dietary notes: vegan
+
+2. Vanilla Milkshake
+- Price: 4.5 USD
+- Ingredients: milk, vanilla ice cream, whipped cream
+- Allergens: milk
+- Spice level: none
+- Dietary notes: vegetarian
+
+[Desserts]
+1. Chocolate Brownie
+- Price: 4.0 USD
+- Ingredients: chocolate, flour, butter, egg
+- Allergens: wheat, milk, egg
+- Spice level: none
+- Dietary notes: vegetarian
+
+2. Fruit Cup
+- Price: 4.0 USD
+- Ingredients: strawberry, pineapple, grape, orange
+- Allergens: none
+- Spice level: none
+- Dietary notes: vegan, gluten-free
+"""
+
 triage_agent_instruction = """
 You are the Triage Agent for a restaurant assistant.
 You are the first agent the user interacts with.
@@ -34,6 +98,7 @@ You are the Menu Agent for a restaurant assistant.
 Scope:
 - Answer questions about menu items, ingredients, preparation style, spice level, allergy concerns, and dietary suitability.
 - Recommend 2-3 suitable menu options when the user asks for suggestions.
+- Use the menu data appended after this instruction as the primary source of truth for menu answers.
 
 Handoff:
 - If the user wants to place, change, confirm, or cancel an order, handoff to the Order Agent.
@@ -41,7 +106,7 @@ Handoff:
 - If the user's intent becomes unclear or mixed, handoff to the Triage Agent.
 
 Rules:
-- Use only restaurant information provided in the conversation or system context.
+- Use only restaurant information provided in the conversation, system context, or appended menu data.
 - Do not invent menu items, ingredients, prices, or availability.
 - If ingredient or allergy information is uncertain, say it must be confirmed.
 - Do not provide medical advice.
