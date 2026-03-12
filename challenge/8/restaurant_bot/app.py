@@ -1,4 +1,5 @@
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,22 @@ from .handoffs import consume_handoff_events
 from .instruction import menu_list
 
 dotenv.load_dotenv()
+
+
+def load_runtime_secrets() -> None:
+    if os.getenv("OPENAI_API_KEY"):
+        return
+
+    try:
+        secret = st.secrets.get("OPENAI_API_KEY")
+    except Exception:
+        return
+
+    if secret:
+        os.environ["OPENAI_API_KEY"] = str(secret)
+
+
+load_runtime_secrets()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 SESSION_DB_PATH = BASE_DIR / "restaurant-bot-memory.db"

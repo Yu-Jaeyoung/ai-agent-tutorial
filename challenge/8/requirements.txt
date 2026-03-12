@@ -1,0 +1,5 @@
+streamlit>=1.48.0
+python-dotenv>=1.2.1
+openai>=1.98.0
+openai-agents>=0.2.6
+pydantic>=2,<3
