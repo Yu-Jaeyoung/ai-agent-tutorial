@@ -1,11 +1,13 @@
+import re
 from typing import Any
 
 from agents import Agent, ModelSettings, RunContextWrapper, Runner, input_guardrail, output_guardrail
 from agents.guardrail import GuardrailFunctionOutput
 from pydantic import BaseModel
 
+from .conversation_flow import get_contextual_allow_reason
 from .menu_catalog import get_menu_names, normalize_text
-from .models import InputGuardrailDecision, OutputGuardrailDecision
+from .models import InputGuardrailDecision, OutputGuardrailDecision, RestaurantRunContext
 
 OFF_TOPIC_FALLBACK = (
     "저는 레스토랑 관련 질문만 도와드릴 수 있어요. 메뉴를 확인하거나, "
@@ -241,6 +243,10 @@ def _mentions_known_menu(text: str) -> bool:
     return any(normalize_text(menu_name) in normalized for menu_name in get_menu_names())
 
 
+def _looks_like_menu_item_selection(text: str) -> bool:
+    return _mentions_known_menu(text) and bool(re.search(r"\d", text))
+
+
 def _looks_like_restaurant_complaint(text: str) -> bool:
     return _contains_any_keyword(text, _COMPLAINT_CONTEXT_KEYWORDS) and _contains_any_keyword(
         text,
@@ -249,7 +255,7 @@ def _looks_like_restaurant_complaint(text: str) -> bool:
 
 
 def _looks_like_order_request(text: str) -> bool:
-    return _contains_any_keyword(text, _ORDER_INTENT_KEYWORDS) or (
+    return _contains_any_keyword(text, _ORDER_INTENT_KEYWORDS) or _looks_like_menu_item_selection(text) or (
         _mentions_known_menu(text)
         and _contains_any_keyword(
             text,
@@ -285,6 +291,28 @@ def _build_allowed_input_decision(reason: str) -> InputGuardrailDecision:
         fallback_message="",
         reason=reason,
     )
+
+
+def _coerce_run_context(context: Any | None) -> RestaurantRunContext | None:
+    if context is None:
+        return None
+
+    if isinstance(context, RestaurantRunContext):
+        return context
+
+    if isinstance(context, BaseModel):
+        try:
+            return RestaurantRunContext.model_validate(context.model_dump())
+        except Exception:
+            return None
+
+    if isinstance(context, dict):
+        try:
+            return RestaurantRunContext.model_validate(context)
+        except Exception:
+            return None
+
+    return None
 
 
 def _normalize_input_decision(
@@ -328,6 +356,11 @@ def _normalize_output_decision(decision: OutputGuardrailDecision) -> OutputGuard
 
 
 async def _classify_input(text: str, context: Any | None) -> InputGuardrailDecision:
+    run_context = _coerce_run_context(context)
+    contextual_allow_reason = get_contextual_allow_reason(text, run_context)
+    if contextual_allow_reason:
+        return _build_allowed_input_decision(contextual_allow_reason)
+
     if _looks_like_restaurant_complaint(text):
         return _build_allowed_input_decision("레스토랑 불만 맥락")
 

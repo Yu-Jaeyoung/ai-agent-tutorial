@@ -19,6 +19,18 @@ class MenuItem(BaseModel):
     dietary_notes: list[str]
 
 
+class PendingFlowState(BaseModel):
+    agent_name: str | None = None
+    flow_kind: Literal["menu", "order", "reservation", "complaints"] | None = None
+    stage: Literal["awaiting_details", "awaiting_confirmation", "completed"] | None = None
+
+
+class RestaurantRunContext(BaseModel):
+    active_agent_name: str | None = None
+    latest_assistant_text: str = ""
+    pending_flow_state: PendingFlowState | None = None
+
+
 class InputGuardrailDecision(BaseModel):
     allow: bool
     category: Literal["allowed", "off_topic", "inappropriate_language"]

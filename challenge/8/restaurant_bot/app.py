@@ -10,8 +10,15 @@ from agents.exceptions import InputGuardrailTripwireTriggered, OutputGuardrailTr
 from pydantic import BaseModel
 
 from .bot_agents import AGENT_REGISTRY, triage_agent
+from .conversation_flow import (
+    build_run_context,
+    get_latest_assistant_text,
+    infer_pending_flow_state,
+    should_reset_to_triage,
+)
 from .handoffs import consume_handoff_events
 from .instruction import menu_list
+from .models import PendingFlowState, RestaurantRunContext
 
 dotenv.load_dotenv()
 
@@ -39,6 +46,7 @@ CHAT_TURNS_SESSION_KEY = "chat_turns"
 AGENT_RUNNING_SESSION_KEY = "agent_running"
 PENDING_MESSAGES_SESSION_KEY = "pending_messages"
 ACTIVE_AGENT_NAME_SESSION_KEY = "active_agent_name"
+PENDING_FLOW_STATE_SESSION_KEY = "pending_flow_state"
 
 
 def get_session() -> SQLiteSession:
@@ -60,6 +68,27 @@ def get_chat_turns() -> list[dict[str, Any]]:
 
 def get_pending_messages() -> list[str]:
     return st.session_state.setdefault(PENDING_MESSAGES_SESSION_KEY, [])
+
+
+def get_pending_flow_state() -> PendingFlowState | None:
+    pending_flow_state = st.session_state.get(PENDING_FLOW_STATE_SESSION_KEY)
+    if pending_flow_state is None:
+        return None
+
+    if isinstance(pending_flow_state, PendingFlowState):
+        return pending_flow_state
+
+    try:
+        parsed_state = PendingFlowState.model_validate(pending_flow_state)
+    except Exception:
+        return None
+
+    st.session_state[PENDING_FLOW_STATE_SESSION_KEY] = parsed_state
+    return parsed_state
+
+
+def set_pending_flow_state(pending_flow_state: PendingFlowState | None) -> None:
+    st.session_state[PENDING_FLOW_STATE_SESSION_KEY] = pending_flow_state
 
 
 def get_active_agent() -> Agent[Any]:
@@ -114,6 +143,7 @@ def clear_ui_state() -> None:
     st.session_state[AGENT_RUNNING_SESSION_KEY] = False
     st.session_state[PENDING_MESSAGES_SESSION_KEY] = []
     st.session_state[ACTIVE_AGENT_NAME_SESSION_KEY] = triage_agent.name
+    st.session_state[PENDING_FLOW_STATE_SESSION_KEY] = None
     st.session_state[HANDOFF_HISTORY_SESSION_KEY] = []
     st.session_state[CHAT_TURNS_SESSION_KEY] = []
     st.session_state["handoff_events"] = []
@@ -268,11 +298,20 @@ def render_chat_turns() -> None:
                 st.write(turn["assistant"].replace("$", "\\$"))
 
 
+def get_current_run_context() -> RestaurantRunContext:
+    return build_run_context(
+        active_agent_name=get_active_agent().name,
+        latest_assistant_text=get_latest_assistant_text(get_chat_turns()),
+        pending_flow_state=get_pending_flow_state(),
+    )
+
+
 async def run_agent(
     starting_agent: Agent[Any],
     message: str,
     session: SQLiteSession,
     turn_index: int,
+    run_context: RestaurantRunContext,
 ):
     consume_handoff_events()
 
@@ -286,6 +325,7 @@ async def run_agent(
             stream = Runner.run_streamed(
                 starting_agent,
                 message,
+                context=run_context,
                 session=session,
             )
 
@@ -316,7 +356,15 @@ async def run_agent(
                 assistant=response,
                 handoffs=turn_handoffs,
             )
-            set_active_agent(stream.last_agent)
+            pending_flow_state = infer_pending_flow_state(
+                agent_name=stream.last_agent.name,
+                assistant_text=response,
+            )
+            set_pending_flow_state(pending_flow_state)
+            if should_reset_to_triage(pending_flow_state):
+                set_active_agent(triage_agent)
+            else:
+                set_active_agent(stream.last_agent)
         except (InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered) as exc:
             fallback_message = extract_guardrail_fallback_message(exc)
             consume_handoff_events()
@@ -355,6 +403,12 @@ def render_sidebar(session: SQLiteSession) -> None:
 
         st.caption("Current Agent")
         st.code(get_active_agent().name)
+
+        with st.expander("Pending Flow", expanded=False):
+            pending_flow_state = get_pending_flow_state()
+            st.write(
+                pending_flow_state.model_dump() if pending_flow_state is not None else None
+            )
 
         with st.expander("Sample Menu Data", expanded=False):
             st.code(menu_list.strip())
@@ -403,13 +457,17 @@ def main():
 
     next_message = pending_messages.pop(0)
     turn_index = append_chat_turn(next_message)
+    pending_flow_state = get_pending_flow_state()
+    if pending_flow_state is not None and pending_flow_state.stage == "completed":
+        set_pending_flow_state(None)
     starting_agent = get_active_agent()
+    run_context = get_current_run_context()
 
     with st.chat_message("user"):
         st.write(next_message)
 
     try:
-        asyncio.run(run_agent(starting_agent, next_message, session, turn_index))
+        asyncio.run(run_agent(starting_agent, next_message, session, turn_index, run_context))
     finally:
         set_agent_running(bool(get_pending_messages()))
 
