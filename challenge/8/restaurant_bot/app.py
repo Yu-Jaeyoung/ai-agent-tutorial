@@ -5,11 +5,11 @@ from typing import Any
 
 import dotenv
 import streamlit as st
-from agents import Runner, SQLiteSession
+from agents import Agent, Runner, SQLiteSession
 from agents.exceptions import InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered
 from pydantic import BaseModel
 
-from .bot_agents import triage_agent
+from .bot_agents import AGENT_REGISTRY, triage_agent
 from .handoffs import consume_handoff_events
 from .instruction import menu_list
 
@@ -38,6 +38,7 @@ HANDOFF_HISTORY_SESSION_KEY = "handoff_history"
 CHAT_TURNS_SESSION_KEY = "chat_turns"
 AGENT_RUNNING_SESSION_KEY = "agent_running"
 PENDING_MESSAGES_SESSION_KEY = "pending_messages"
+ACTIVE_AGENT_NAME_SESSION_KEY = "active_agent_name"
 
 
 def get_session() -> SQLiteSession:
@@ -59,6 +60,18 @@ def get_chat_turns() -> list[dict[str, Any]]:
 
 def get_pending_messages() -> list[str]:
     return st.session_state.setdefault(PENDING_MESSAGES_SESSION_KEY, [])
+
+
+def get_active_agent() -> Agent[Any]:
+    active_agent_name = st.session_state.setdefault(
+        ACTIVE_AGENT_NAME_SESSION_KEY,
+        triage_agent.name,
+    )
+    return AGENT_REGISTRY.get(active_agent_name, triage_agent)
+
+
+def set_active_agent(agent: Agent[Any]) -> None:
+    st.session_state[ACTIVE_AGENT_NAME_SESSION_KEY] = agent.name
 
 
 def is_agent_running() -> bool:
@@ -100,6 +113,7 @@ def update_chat_turn(
 def clear_ui_state() -> None:
     st.session_state[AGENT_RUNNING_SESSION_KEY] = False
     st.session_state[PENDING_MESSAGES_SESSION_KEY] = []
+    st.session_state[ACTIVE_AGENT_NAME_SESSION_KEY] = triage_agent.name
     st.session_state[HANDOFF_HISTORY_SESSION_KEY] = []
     st.session_state[CHAT_TURNS_SESSION_KEY] = []
     st.session_state["handoff_events"] = []
@@ -255,6 +269,7 @@ def render_chat_turns() -> None:
 
 
 async def run_agent(
+    starting_agent: Agent[Any],
     message: str,
     session: SQLiteSession,
     turn_index: int,
@@ -269,7 +284,7 @@ async def run_agent(
 
         try:
             stream = Runner.run_streamed(
-                triage_agent,
+                starting_agent,
                 message,
                 session=session,
             )
@@ -301,6 +316,7 @@ async def run_agent(
                 assistant=response,
                 handoffs=turn_handoffs,
             )
+            set_active_agent(stream.last_agent)
         except (InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered) as exc:
             fallback_message = extract_guardrail_fallback_message(exc)
             consume_handoff_events()
@@ -314,6 +330,7 @@ async def run_agent(
                 handoffs=[],
             )
             await session.add_items([build_assistant_message_item(fallback_message)])
+            set_active_agent(starting_agent)
         except Exception as exc:
             error_message = f"에이전트 실행 중 오류가 발생했습니다: {exc}"
             text_placeholder.error(error_message)
@@ -323,6 +340,7 @@ async def run_agent(
                 assistant=error_message,
                 handoffs=turn_handoffs,
             )
+            set_active_agent(starting_agent)
 
 
 def render_sidebar(session: SQLiteSession) -> None:
@@ -335,8 +353,8 @@ def render_sidebar(session: SQLiteSession) -> None:
             clear_ui_state()
             st.rerun()
 
-        st.caption("Entry Agent")
-        st.code(triage_agent.name)
+        st.caption("Current Agent")
+        st.code(get_active_agent().name)
 
         with st.expander("Sample Menu Data", expanded=False):
             st.code(menu_list.strip())
@@ -385,12 +403,13 @@ def main():
 
     next_message = pending_messages.pop(0)
     turn_index = append_chat_turn(next_message)
+    starting_agent = get_active_agent()
 
     with st.chat_message("user"):
         st.write(next_message)
 
     try:
-        asyncio.run(run_agent(next_message, session, turn_index))
+        asyncio.run(run_agent(starting_agent, next_message, session, turn_index))
     finally:
         set_agent_running(bool(get_pending_messages()))
 

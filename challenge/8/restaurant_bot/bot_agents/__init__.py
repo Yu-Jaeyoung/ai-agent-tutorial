@@ -100,7 +100,16 @@ complaints_agent.handoffs = [
     ),
 ]
 
+AGENT_REGISTRY = {
+    triage_agent.name: triage_agent,
+    menu_agent.name: menu_agent,
+    order_agent.name: order_agent,
+    reservation_agent.name: reservation_agent,
+    complaints_agent.name: complaints_agent,
+}
+
 __all__ = [
+    "AGENT_REGISTRY",
     "complaints_agent",
     "menu_agent",
     "order_agent",
