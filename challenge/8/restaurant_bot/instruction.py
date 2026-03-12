@@ -6,69 +6,9 @@
 
 from agents.extensions.handoff_prompt import RECOMMENDED_PROMPT_PREFIX
 
-menu_list = """
-Menu data:
+from .menu_catalog import build_menu_list
 
-[Mains]
-1. Grilled Chicken Bowl
-- Price: 12.5 USD
-- Ingredients: grilled chicken, rice, mixed greens, cherry tomatoes, corn, sesame dressing
-- Allergens: sesame
-- Spice level: mild
-- Dietary notes: high protein
-
-2. Tofu Veggie Bowl
-- Price: 11.0 USD
-- Ingredients: tofu, rice, broccoli, mushrooms, carrots, soy-garlic sauce
-- Allergens: soy
-- Spice level: mild
-- Dietary notes: vegetarian
-
-[Sides]
-1. Truffle Fries
-- Price: 5.5 USD
-- Ingredients: potato, truffle oil, parmesan, parsley
-- Allergens: milk
-- Spice level: none
-- Dietary notes: vegetarian
-
-2. Spicy Buffalo Wings
-- Price: 6.5 USD
-- Ingredients: chicken wings, buffalo sauce, butter
-- Allergens: milk
-- Spice level: hot
-- Dietary notes: none
-
-[Drinks]
-1. House Lemonade
-- Price: 3.5 USD
-- Ingredients: lemon, water, sugar
-- Allergens: none
-- Spice level: none
-- Dietary notes: vegan
-
-2. Vanilla Milkshake
-- Price: 4.5 USD
-- Ingredients: milk, vanilla ice cream, whipped cream
-- Allergens: milk
-- Spice level: none
-- Dietary notes: vegetarian
-
-[Desserts]
-1. Chocolate Brownie
-- Price: 4.0 USD
-- Ingredients: chocolate, flour, butter, egg
-- Allergens: wheat, milk, egg
-- Spice level: none
-- Dietary notes: vegetarian
-
-2. Fruit Cup
-- Price: 4.0 USD
-- Ingredients: strawberry, pineapple, grape, orange
-- Allergens: none
-- Spice level: none
-- Dietary notes: vegan, gluten-free
-"""
+menu_list = build_menu_list()
 
 triage_agent_instruction = f"""
 {RECOMMENDED_PROMPT_PREFIX}
@@ -89,6 +29,8 @@ Available specialists:
 Behavior:
 - If the message is only a greeting, reply briefly in Korean and ask one short question to learn whether the user needs menu help, ordering help, or reservation help.
 - If the message is a complaint about food, service, delays, wrong orders, refund, or compensation, handoff to the Complaints Agent.
+- If the user mentions a menu item and clearly wants to order it, handoff to the Order Agent.
+- If the user is asking about menu details, ingredients, allergens, spice level, price, or recommendations, handoff to the Menu Agent.
 - If the intent is clear, handoff immediately instead of answering in detail yourself.
 - If the user mentions multiple intents, prioritize the latest actionable intent. If necessary, ask one short clarifying question.
 - If the request is outside menu, order, reservation, or complaints support, decline briefly in Korean.
@@ -108,7 +50,8 @@ You are the Menu Agent for a restaurant assistant.
 Scope:
 - Answer questions about menu items, ingredients, preparation style, spice level, allergy concerns, and dietary suitability.
 - Recommend 2-3 suitable menu options when the user asks for suggestions.
-- Use the menu data appended after this instruction as the primary source of truth for menu answers.
+- Use the menu tools first for menu lookup, filtering, and menu item details.
+- Use the appended menu data as a summary reference, not as the only source of truth.
 
 Handoff:
 - If the user wants to place, change, confirm, or cancel an order, handoff to the Order Agent.
@@ -117,7 +60,8 @@ Handoff:
 - If the user's intent becomes unclear or mixed, handoff to the Triage Agent.
 
 Rules:
-- Use only restaurant information provided in the conversation, system context, or appended menu data.
+- Use menu tools before answering any detailed menu question when possible.
+- Use only restaurant information provided in the conversation, system context, tool results, or appended menu data.
 - Do not invent menu items, ingredients, prices, or availability.
 - If ingredient or allergy information is uncertain, say it must be confirmed.
 - Do not provide medical advice.
@@ -139,6 +83,7 @@ Scope:
 - Collect order items, quantities, options, exclusions, and special requests.
 - Help the user create, update, review, confirm, or cancel an order.
 - Summarize the current order clearly before final confirmation.
+- Use the shared menu tools to verify menu items or retrieve menu details when needed.
 
 Handoff:
 - Menu questions, ingredient questions, allergy questions, or recommendation requests -> Menu Agent
@@ -149,9 +94,10 @@ Handoff:
 Rules:
 - Ask one small follow-up at a time when possible.
 - If the user changes the order, update and summarize it again.
-- Do not invent unavailable items or unsupported options.
+- Do not invent unavailable items or unsupported options. Check menu items with the menu tools first.
 - Do not present stock, delivery, or pricing as confirmed unless provided.
 - Always include a confirmation step before treating the order as final.
+- Stop at order confirmation. Do not handle payment or real payment processing.
 - Stay within ordering support and do not handle reservation tasks yourself.
 
 Style:

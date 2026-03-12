@@ -4,6 +4,7 @@ from agents import Agent, ModelSettings, RunContextWrapper, Runner, input_guardr
 from agents.guardrail import GuardrailFunctionOutput
 from pydantic import BaseModel
 
+from .menu_catalog import get_menu_names, normalize_text
 from .models import InputGuardrailDecision, OutputGuardrailDecision
 
 OFF_TOPIC_FALLBACK = (
@@ -56,6 +57,65 @@ _COMPLAINT_SIGNAL_KEYWORDS = (
     "불만",
     "기다렸",
     "대기",
+)
+
+_ORDER_INTENT_KEYWORDS = (
+    "주문",
+    "시킬",
+    "시켜",
+    "주실",
+    "주세요",
+    "먹고싶",
+    "먹을래",
+    "담아",
+    "추가",
+    "빼",
+    "수량",
+    "확정",
+    "취소",
+    "order",
+)
+
+_MENU_INTENT_KEYWORDS = (
+    "메뉴",
+    "추천",
+    "재료",
+    "알레르기",
+    "allergen",
+    "ingredient",
+    "가격",
+    "price",
+    "채식",
+    "비건",
+    "vegetarian",
+    "vegan",
+    "gluten",
+    "spice",
+    "매운",
+)
+
+_RESERVATION_INTENT_KEYWORDS = (
+    "예약",
+    "방문",
+    "테이블",
+    "인원",
+    "party size",
+    "book",
+    "reserve",
+)
+
+_RESTAURANT_SUPPORT_KEYWORDS = (
+    "메뉴",
+    "주문",
+    "예약",
+    "알레르기",
+    "채식",
+    "비건",
+    "환불",
+    "보상",
+    "직원",
+    "서비스",
+    "불만",
 )
 
 _INPUT_GUARDRAIL_INSTRUCTION = """
@@ -152,14 +212,78 @@ def _extract_text(value: Any) -> str:
 
 
 def _contains_any_keyword(text: str, keywords: tuple[str, ...]) -> bool:
-    normalized = text.lower().replace(" ", "")
-    return any(keyword in normalized for keyword in keywords)
+    normalized = normalize_text(text)
+    return any(normalize_text(keyword) in normalized for keyword in keywords)
+
+
+def _extract_latest_user_turn(input_data: str | list[Any]) -> str:
+    if isinstance(input_data, str):
+        return input_data
+
+    if isinstance(input_data, list):
+        for item in reversed(input_data):
+            if not isinstance(item, dict):
+                continue
+
+            if item.get("role") != "user":
+                continue
+
+            content = item.get("content")
+            if isinstance(content, str):
+                return content
+            return _extract_text(content)
+
+    return _extract_text(input_data)
+
+
+def _mentions_known_menu(text: str) -> bool:
+    normalized = normalize_text(text)
+    return any(normalize_text(menu_name) in normalized for menu_name in get_menu_names())
 
 
 def _looks_like_restaurant_complaint(text: str) -> bool:
     return _contains_any_keyword(text, _COMPLAINT_CONTEXT_KEYWORDS) and _contains_any_keyword(
         text,
         _COMPLAINT_SIGNAL_KEYWORDS,
+    )
+
+
+def _looks_like_order_request(text: str) -> bool:
+    return _contains_any_keyword(text, _ORDER_INTENT_KEYWORDS) or (
+        _mentions_known_menu(text)
+        and _contains_any_keyword(
+            text,
+            ("싶어", "원해", "할게", "할래", "주세요", "주실", "먹을래", "먹고싶"),
+        )
+    )
+
+
+def _looks_like_menu_request(text: str) -> bool:
+    return _contains_any_keyword(text, _MENU_INTENT_KEYWORDS) or (
+        _mentions_known_menu(text) and not _looks_like_order_request(text)
+    )
+
+
+def _looks_like_reservation_request(text: str) -> bool:
+    return _contains_any_keyword(text, _RESERVATION_INTENT_KEYWORDS)
+
+
+def _is_explicit_restaurant_support_request(text: str) -> bool:
+    return (
+        _looks_like_restaurant_complaint(text)
+        or _looks_like_order_request(text)
+        or _looks_like_menu_request(text)
+        or _looks_like_reservation_request(text)
+        or _contains_any_keyword(text, _RESTAURANT_SUPPORT_KEYWORDS)
+    )
+
+
+def _build_allowed_input_decision(reason: str) -> InputGuardrailDecision:
+    return InputGuardrailDecision(
+        allow=True,
+        category="allowed",
+        fallback_message="",
+        reason=reason,
     )
 
 
@@ -204,6 +328,21 @@ def _normalize_output_decision(decision: OutputGuardrailDecision) -> OutputGuard
 
 
 async def _classify_input(text: str, context: Any | None) -> InputGuardrailDecision:
+    if _looks_like_restaurant_complaint(text):
+        return _build_allowed_input_decision("레스토랑 불만 맥락")
+
+    if _looks_like_order_request(text):
+        return _build_allowed_input_decision("주문 의도")
+
+    if _looks_like_menu_request(text):
+        return _build_allowed_input_decision("메뉴 문의")
+
+    if _looks_like_reservation_request(text):
+        return _build_allowed_input_decision("예약 문의")
+
+    if _contains_any_keyword(text, _RESTAURANT_SUPPORT_KEYWORDS):
+        return _build_allowed_input_decision("레스토랑 지원 요청")
+
     result = await Runner.run(
         input_guardrail_classifier_agent,
         text,
@@ -229,8 +368,9 @@ async def restaurant_input_guardrail(
     _: Agent[Any],
     input_data: str | list[Any],
 ) -> GuardrailFunctionOutput:
+    latest_user_turn = _extract_latest_user_turn(input_data)
     decision = await _classify_input(
-        _extract_text(input_data),
+        latest_user_turn,
         context.context,
     )
     return GuardrailFunctionOutput(

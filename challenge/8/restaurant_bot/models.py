@@ -9,6 +9,16 @@ class HandoffData(BaseModel):
     reason: str | None = None
 
 
+class MenuItem(BaseModel):
+    name: str
+    category: str
+    price: float
+    ingredients: list[str]
+    allergens: list[str]
+    spice_level: str
+    dietary_notes: list[str]
+
+
 class InputGuardrailDecision(BaseModel):
     allow: bool
     category: Literal["allowed", "off_topic", "inappropriate_language"]
