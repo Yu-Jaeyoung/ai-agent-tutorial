@@ -14,16 +14,30 @@ _FLOW_KIND_BY_AGENT = {
 }
 
 _ORDER_CONFIRMATION_PROMPTS = (
-    "확인해주시면",
-    "맞는지 확인",
-    "주문 내용을 확인",
-    "주문이 맞는지",
-    "진행하겠습니다",
+    "주문이맞는지확인해주시면결제단계로진행하겠습니다",
+    "주문이맞는지확인해주시면",
+    "결제단계로진행하겠습니다",
 )
 
-_ORDER_COMPLETION_PROMPTS = (
-    "주문이 완료되었습니다",
-    "잠시만 기다려주세요",
+_ORDER_PAYMENT_METHOD_PROMPTS = (
+    "결제수단을선택해주세요",
+    "카드또는현장결제중에서선택할수있어요",
+)
+
+_ORDER_PAYMENT_CONFIRMATION_PROMPTS = (
+    "카드결제를진행할까요",
+    "확인해주시면결제를진행하겠습니다",
+)
+
+_ORDER_CARD_COMPLETION_PROMPTS = (
+    "결제가완료되었습니다",
+    "주문이접수되었습니다",
+    "잠시만기다려주세요",
+)
+
+_ORDER_ONSITE_COMPLETION_PROMPTS = (
+    "주문이완료되었습니다",
+    "결제는매장에서진행됩니다",
 )
 
 _RESERVATION_CONFIRMATION_PROMPTS = (
@@ -52,6 +66,24 @@ _CONFIRMATION_INPUTS = (
     "예약해주세요",
     "그대로해줘",
     "그대로진행해줘",
+)
+
+_PAYMENT_METHOD_INPUTS = (
+    "카드",
+    "카드로할게",
+    "카드로결제할게",
+    "현장결제",
+    "현장결제로할게",
+    "매장에서결제할게",
+    "매장결제",
+)
+
+_PAYMENT_CONFIRMATION_INPUTS = (
+    "결제해줘",
+    "결제진행해줘",
+    "승인해줘",
+    "결제해주세요",
+    "결제진행해주세요",
 )
 
 _ORDER_FOLLOW_UP_KEYWORDS = (
@@ -120,6 +152,16 @@ def _looks_like_confirmation_input(text: str) -> bool:
     return normalized in {normalize_text(candidate) for candidate in _CONFIRMATION_INPUTS}
 
 
+def _looks_like_payment_method_input(text: str) -> bool:
+    normalized = normalize_text(text)
+    return normalized in {normalize_text(candidate) for candidate in _PAYMENT_METHOD_INPUTS}
+
+
+def _looks_like_payment_confirmation_input(text: str) -> bool:
+    normalized = normalize_text(text)
+    return normalized in {normalize_text(candidate) for candidate in _PAYMENT_CONFIRMATION_INPUTS}
+
+
 def _looks_like_order_follow_up(text: str) -> bool:
     normalized = normalize_text(text)
     if _contains_any_keyword(text, _ORDER_FOLLOW_UP_KEYWORDS):
@@ -182,9 +224,15 @@ def infer_pending_flow_state(
 
     normalized = normalize_text(assistant_text)
     if flow_kind == "order":
-        if all(normalize_text(prompt) in normalized for prompt in _ORDER_COMPLETION_PROMPTS):
+        if all(prompt in normalized for prompt in _ORDER_CARD_COMPLETION_PROMPTS) or all(
+            prompt in normalized for prompt in _ORDER_ONSITE_COMPLETION_PROMPTS
+        ):
             stage = "completed"
-        elif any(normalize_text(prompt) in normalized for prompt in _ORDER_CONFIRMATION_PROMPTS):
+        elif any(prompt in normalized for prompt in _ORDER_PAYMENT_CONFIRMATION_PROMPTS):
+            stage = "awaiting_payment_confirmation"
+        elif any(prompt in normalized for prompt in _ORDER_PAYMENT_METHOD_PROMPTS):
+            stage = "awaiting_payment_method"
+        elif any(prompt in normalized for prompt in _ORDER_CONFIRMATION_PROMPTS):
             stage = "awaiting_confirmation"
         else:
             stage = "awaiting_details"
@@ -235,6 +283,20 @@ def get_contextual_allow_reason(
 
     if pending_flow_state.stage == "awaiting_confirmation" and _looks_like_confirmation_input(text):
         return f"{pending_flow_state.flow_kind} 확인 발화"
+
+    if (
+        pending_flow_state.flow_kind == "order"
+        and pending_flow_state.stage == "awaiting_payment_method"
+        and _looks_like_payment_method_input(text)
+    ):
+        return "결제 수단 선택 발화"
+
+    if (
+        pending_flow_state.flow_kind == "order"
+        and pending_flow_state.stage == "awaiting_payment_confirmation"
+        and (_looks_like_payment_confirmation_input(text) or _looks_like_confirmation_input(text))
+    ):
+        return "결제 확인 발화"
 
     if pending_flow_state.flow_kind == "order" and _looks_like_order_follow_up(text):
         return "주문 후속 발화"
