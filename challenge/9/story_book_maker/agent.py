@@ -1,3 +1,4 @@
+import hashlib
 import re
 
 from google.adk.agents.callback_context import CallbackContext
@@ -76,18 +77,57 @@ def slugify_theme(theme: str) -> str:
     return slug or "storybook"
 
 
-def build_page_illustration_prompt(theme: str, page: StoryPageState) -> str:
+def build_storybook_style_guide() -> str:
+    return """
+Shared art direction:
+- Create a cohesive children's picture-book series in the same hand-painted watercolor storybook style.
+- Use soft warm lighting, gentle textures, rounded shapes, and a calm pastel color palette.
+- Keep recurring characters, props, and environments visually identical across every page.
+- Preserve the same face shapes, body proportions, colors, clothing, accessories, and important props on all pages.
+- Maintain consistent world design, camera language, brushwork, and emotional tone across the whole book.
+- If a detail is not explicitly repeated on a page, preserve it from the other pages instead of inventing a new variation.
+- The five illustrations must feel like consecutive spreads from one book, not separate unrelated images.
+""".strip()
+
+
+def build_storybook_overview(storybook_state) -> str:
+    return "\n".join(
+        (
+            f"Page {page.page_number}: "
+            f"text={page.page_text!r}; "
+            f"visual_description={page.visual_description!r}"
+        )
+        for page in storybook_state.pages
+    )
+
+
+def build_theme_seed(theme: str) -> int:
+    digest = hashlib.sha256(theme.encode("utf-8")).hexdigest()
+    return int(digest[:8], 16)
+
+
+def build_page_illustration_prompt(storybook_state, page: StoryPageState) -> str:
     return f"""
 Create one children's storybook illustration for a single page.
 
-Theme: {theme}
-Page number: {page.page_number}
-Story text: {page.page_text}
-Visual description: {page.visual_description}
+Theme: {storybook_state.theme}
+Book length: 5 pages
+
+{build_storybook_style_guide()}
+
+Full storybook overview:
+{build_storybook_overview(storybook_state)}
+
+Target page:
+- Page number: {page.page_number}
+- Story text: {page.page_text}
+- Visual description: {page.visual_description}
 
 Requirements:
 - Make the image child-friendly, warm, and expressive.
-- Keep the characters and visual style consistent across all pages for the same theme.
+- Match the exact same character designs, environment design, palette, and illustration style used across the whole storybook.
+- Treat recurring characters and props as the same individuals from page to page.
+- Keep visual continuity with the full storybook overview above.
 - Do not include captions, speech bubbles, or printed text inside the image.
 - Focus on a clear picture-book composition for this page only.
 """.strip()
@@ -135,13 +175,13 @@ def extract_generated_image_bytes(response) -> tuple[bytes, str]:
 
 def generate_page_illustration(
     client: Client,
-    theme: str,
+    storybook_state,
     page: StoryPageState,
     existing_artifacts: list[str],
 ) -> tuple[str, types.Part | None]:
     existing_artifact = find_existing_page_artifact(
         existing_artifacts=existing_artifacts,
-        theme=theme,
+        theme=storybook_state.theme,
         page_number=page.page_number,
     )
     if existing_artifact:
@@ -149,9 +189,10 @@ def generate_page_illustration(
 
     response = client.models.generate_content(
         model=ILLUSTRATOR_MODEL,
-        contents=[build_page_illustration_prompt(theme, page)],
+        contents=[build_page_illustration_prompt(storybook_state, page)],
         config=types.GenerateContentConfig(
             response_modalities=["Image"],
+            seed=build_theme_seed(storybook_state.theme),
             image_config=types.ImageConfig(
                 aspect_ratio=ILLUSTRATION_ASPECT_RATIO,
             ),
@@ -159,7 +200,7 @@ def generate_page_illustration(
     )
     image_bytes, mime_type = extract_generated_image_bytes(response)
     artifact_filename = (
-        f"{build_page_artifact_basename(theme, page.page_number)}"
+        f"{build_page_artifact_basename(storybook_state.theme, page.page_number)}"
         f"{mime_type_to_extension(mime_type)}"
     )
     artifact = types.Part(
@@ -203,7 +244,7 @@ async def generate_storybook_illustrations(callback_context: CallbackContext):
         for page in storybook_state.pages:
             artifact_filename, artifact = generate_page_illustration(
                 client=client,
-                theme=storybook_state.theme,
+                storybook_state=storybook_state,
                 page=page,
                 existing_artifacts=existing_artifacts,
             )
