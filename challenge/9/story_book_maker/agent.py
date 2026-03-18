@@ -1,5 +1,4 @@
 import re
-from pathlib import Path
 
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents import Agent, SequentialAgent
@@ -12,7 +11,6 @@ from .prompt import (
     STORY_WRITER_AGENT_INSTRUCTION,
 )
 from .settings import (
-    GENERATED_IMAGES_DIR,
     GOOGLE_API_KEY,
     ILLUSTRATION_ASPECT_RATIO,
     ILLUSTRATOR_MODEL,
@@ -71,12 +69,6 @@ def slugify_theme(theme: str) -> str:
     return slug or "storybook"
 
 
-def build_illustration_output_dir(theme: str) -> Path:
-    output_dir = GENERATED_IMAGES_DIR / slugify_theme(theme)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir
-
-
 def build_page_illustration_prompt(theme: str, page: StoryPageState) -> str:
     return f"""
 Create one children's storybook illustration for a single page.
@@ -94,36 +86,82 @@ Requirements:
 """.strip()
 
 
-def extract_generated_image(response) -> object:
-    for part in response.parts or []:
-        try:
-            return part.as_image()
-        except Exception:
+def build_page_artifact_basename(theme: str, page_number: int) -> str:
+    return f"{slugify_theme(theme)}-page-{page_number}-image"
+
+
+def find_existing_page_artifact(
+    existing_artifacts: list[str],
+    theme: str,
+    page_number: int,
+) -> str | None:
+    artifact_prefix = f"{build_page_artifact_basename(theme, page_number)}."
+    for artifact_name in sorted(existing_artifacts):
+        if artifact_name.startswith(artifact_prefix):
+            return artifact_name
+    return None
+
+
+def mime_type_to_extension(mime_type: str) -> str:
+    normalized_mime_type = mime_type.lower()
+    if normalized_mime_type == "image/png":
+        return ".png"
+    if normalized_mime_type in {"image/jpeg", "image/jpg"}:
+        return ".jpeg"
+    if normalized_mime_type == "image/webp":
+        return ".webp"
+    return ".img"
+
+
+def extract_generated_image_bytes(response) -> tuple[bytes, str]:
+    for candidate in response.candidates or []:
+        if not candidate.content:
             continue
-    raise ValueError("The image model response did not contain a generated image.")
+
+        for part in candidate.content.parts or []:
+            inline_data = part.inline_data
+            if inline_data and inline_data.data:
+                return inline_data.data, inline_data.mime_type or "image/jpeg"
+
+    raise ValueError("The image model response did not contain generated image bytes.")
 
 
 def generate_page_illustration(
     client: Client,
     theme: str,
     page: StoryPageState,
-    output_dir: Path,
-) -> str:
+    existing_artifacts: list[str],
+) -> tuple[str, types.Part | None]:
+    existing_artifact = find_existing_page_artifact(
+        existing_artifacts=existing_artifacts,
+        theme=theme,
+        page_number=page.page_number,
+    )
+    if existing_artifact:
+        return existing_artifact, None
+
     response = client.models.generate_content(
         model=ILLUSTRATOR_MODEL,
-        contents=build_page_illustration_prompt(theme, page),
+        contents=[build_page_illustration_prompt(theme, page)],
         config=types.GenerateContentConfig(
-            response_modalities=["IMAGE"],
+            response_modalities=["Image"],
             image_config=types.ImageConfig(
                 aspect_ratio=ILLUSTRATION_ASPECT_RATIO,
-                output_mime_type="image/png",
             ),
         ),
     )
-    image = extract_generated_image(response)
-    image_path = output_dir / f"page_{page.page_number}.png"
-    image.save(image_path)
-    return str(image_path.resolve())
+    image_bytes, mime_type = extract_generated_image_bytes(response)
+    artifact_filename = (
+        f"{build_page_artifact_basename(theme, page.page_number)}"
+        f"{mime_type_to_extension(mime_type)}"
+    )
+    artifact = types.Part(
+        inline_data=types.Blob(
+            data=image_bytes,
+            mime_type=mime_type,
+        )
+    )
+    return artifact_filename, artifact
 
 
 def summarize_image_refs(storybook_state) -> str:
@@ -152,11 +190,22 @@ def generate_storybook_illustrations(callback_context: CallbackContext):
 
     try:
         client = Client(api_key=GOOGLE_API_KEY)
-        output_dir = build_illustration_output_dir(storybook_state.theme)
-        image_refs = [
-            generate_page_illustration(client, storybook_state.theme, page, output_dir)
-            for page in storybook_state.pages
-        ]
+        existing_artifacts = callback_context.list_artifacts()
+        image_refs: list[str] = []
+        for page in storybook_state.pages:
+            artifact_filename, artifact = generate_page_illustration(
+                client=client,
+                theme=storybook_state.theme,
+                page=page,
+                existing_artifacts=existing_artifacts,
+            )
+            if artifact is not None:
+                callback_context.save_artifact(
+                    filename=artifact_filename,
+                    artifact=artifact,
+                )
+                existing_artifacts.append(artifact_filename)
+            image_refs.append(artifact_filename)
     except Exception as error:
         callback_context.state[STORYBOOK_STATE_KEY] = create_failed_storybook_state(
             callback_context.state.get(STORYBOOK_STATE_KEY),

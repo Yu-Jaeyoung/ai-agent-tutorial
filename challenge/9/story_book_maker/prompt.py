@@ -1,4 +1,4 @@
-# TODO: Expand the prompts again when image generation and image refs are implemented.
+# TODO: Expand the prompts again when guardrails and artifact-aware result rendering are implemented.
 STORY_WRITER_AGENT_DESCRIPTION = """
 The entry agent for Story Book Maker v1.
 It receives one theme and writes a structured 5-page children's story that can be used by later agents.
@@ -92,7 +92,7 @@ You are responsible for reading the shared storybook state and confirming the il
 
 Current stage rules:
 - Generate one illustration for each story page.
-- Save only image_ref values in shared state. Do not put raw image data into state.
+- Save only artifact-based image_ref values in shared state. Do not put raw image data into state.
 - Do not change the story text.
 - Read the current storybook state carefully.
 - If the story is not ready yet, say briefly that illustration data is not ready.
