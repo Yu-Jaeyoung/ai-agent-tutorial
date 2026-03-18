@@ -2,8 +2,13 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents import Agent
 from google.genai import types
 
-from .prompt import STORY_WRITER_AGENT_DESCRIPTION, STORY_WRITER_AGENT_INSTRUCTION
-from .settings import STORY_WRITER_MODEL
+from .prompt import (
+    ILLUSTRATOR_AGENT_DESCRIPTION,
+    ILLUSTRATOR_AGENT_INSTRUCTION,
+    STORY_WRITER_AGENT_DESCRIPTION,
+    STORY_WRITER_AGENT_INSTRUCTION,
+)
+from .settings import ILLUSTRATOR_MODEL, STORY_WRITER_MODEL
 from .state import (
     STORYBOOK_STATE_KEY,
     TEMP_STORY_DRAFT_STATE_KEY,
@@ -11,6 +16,7 @@ from .state import (
     create_empty_storybook_state,
     create_generated_story_from_writer_response,
     create_storybook_state_from_generated_story,
+    load_storybook_state,
 )
 
 
@@ -44,6 +50,32 @@ def persist_generated_story(callback_context: CallbackContext):
     return None
 
 
+def build_illustrator_instruction(readonly_context):
+    storybook_state = load_storybook_state(readonly_context.state.get(STORYBOOK_STATE_KEY))
+
+    if storybook_state.status != "story_ready" or len(storybook_state.pages) != 5:
+        return (
+            f"{ILLUSTRATOR_AGENT_INSTRUCTION}\n\n"
+            "Current storybook state: story data is not ready for illustration yet."
+        )
+
+    page_summaries = "\n".join(
+        (
+            f"- Page {page.page_number}: "
+            f"text={page.page_text!r}, "
+            f"visual_description={page.visual_description!r}"
+        )
+        for page in storybook_state.pages
+    )
+
+    return (
+        f"{ILLUSTRATOR_AGENT_INSTRUCTION}\n\n"
+        f"Current theme: {storybook_state.theme!r}\n"
+        "Current pages ready for illustration:\n"
+        f"{page_summaries}"
+    )
+
+
 story_writer_agent = Agent(
     name="StoryWriterAgent",
     model=STORY_WRITER_MODEL,
@@ -56,6 +88,13 @@ story_writer_agent = Agent(
     before_agent_callback=ensure_storybook_state,
     output_key=TEMP_STORY_DRAFT_STATE_KEY,
     after_agent_callback=persist_generated_story,
+)
+
+illustrator_agent = Agent(
+    name="IllustratorAgent",
+    model=ILLUSTRATOR_MODEL,
+    description=ILLUSTRATOR_AGENT_DESCRIPTION,
+    instruction=build_illustrator_instruction,
 )
 
 root_agent = story_writer_agent

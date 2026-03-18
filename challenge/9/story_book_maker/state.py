@@ -89,3 +89,9 @@ def create_generated_story_from_writer_response(
         theme=writer_response.theme,
         pages=writer_response.pages,
     )
+
+
+def load_storybook_state(raw_storybook: object | None) -> StorybookState:
+    if not isinstance(raw_storybook, dict):
+        return StorybookState()
+    return StorybookState.model_validate(raw_storybook)
