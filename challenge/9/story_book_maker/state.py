@@ -95,3 +95,40 @@ def load_storybook_state(raw_storybook: object | None) -> StorybookState:
     if not isinstance(raw_storybook, dict):
         return StorybookState()
     return StorybookState.model_validate(raw_storybook)
+
+
+def create_illustration_ready_storybook_state(
+    raw_storybook: object | None,
+    image_refs: list[str],
+) -> dict:
+    storybook_state = load_storybook_state(raw_storybook)
+    if len(storybook_state.pages) != len(image_refs):
+        raise ValueError("image_refs length must match the current story pages.")
+
+    return StorybookState(
+        theme=storybook_state.theme,
+        status="illustration_ready",
+        pages=[
+            StoryPageState(
+                page_number=page.page_number,
+                page_text=page.page_text,
+                visual_description=page.visual_description,
+                image_ref=image_ref,
+            )
+            for page, image_ref in zip(storybook_state.pages, image_refs, strict=True)
+        ],
+        error=None,
+    ).model_dump()
+
+
+def create_failed_storybook_state(
+    raw_storybook: object | None,
+    error: str,
+) -> dict:
+    storybook_state = load_storybook_state(raw_storybook)
+    return StorybookState(
+        theme=storybook_state.theme,
+        status="failed",
+        pages=storybook_state.pages,
+        error=error,
+    ).model_dump()

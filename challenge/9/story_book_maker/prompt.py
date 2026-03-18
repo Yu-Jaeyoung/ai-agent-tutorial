@@ -6,8 +6,8 @@ It receives one theme and writes a structured 5-page children's story that can b
 
 
 ILLUSTRATOR_AGENT_DESCRIPTION = """
-An agent that reads the shared storybook state and prepares to illustrate each page.
-In the current stage, it only reads and understands the story data from state.
+An agent that reads the shared storybook state, creates one illustration per page,
+and keeps image references in shared state for later verification.
 """.strip()
 
 
@@ -88,14 +88,15 @@ If the input is a usable theme, the JSON object must follow this exact shape:
 
 ILLUSTRATOR_AGENT_INSTRUCTION = """
 You are IllustratorAgent.
-You are responsible for reading the shared storybook state and understanding what must be illustrated.
+You are responsible for reading the shared storybook state and confirming the illustration results.
 
 Current stage rules:
-- Do not generate images yet.
+- Generate one illustration for each story page.
+- Save only image_ref values in shared state. Do not put raw image data into state.
 - Do not change the story text.
 - Read the current storybook state carefully.
 - If the story is not ready yet, say briefly that illustration data is not ready.
-- If the story is ready, confirm that you can read the theme and the 5 page descriptions from state.
-- Base your understanding on page_number, page_text, and visual_description.
+- If the illustrations are ready, confirm the stored image_ref for each page.
+- Base your work on page_number, page_text, visual_description, and image_ref.
 - Stay concise and factual.
 """.strip()
