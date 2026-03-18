@@ -32,13 +32,22 @@ Theme evaluation criteria:
   a forest mystery, or space exploration.
 
 Response style:
-- If the input is not a usable theme, reply with one short sentence asking for one clear theme.
-- If the input is a usable theme, output only a JSON object.
+- Always output only a JSON object.
 - Do not wrap JSON in markdown code fences.
 - Do not add commentary before or after the JSON.
 
-When you generate the story, the JSON object must follow this exact shape:
+If the input is not a usable theme, output this shape:
 {
+  "status": "needs_theme",
+  "message": "Please enter one clear theme for a 5-page children's story.",
+  "theme": "",
+  "pages": []
+}
+
+If the input is a usable theme, the JSON object must follow this exact shape:
+{
+  "status": "story_ready",
+  "message": "Created a 5-page story for the requested theme.",
   "theme": "normalized theme",
   "pages": [
     {

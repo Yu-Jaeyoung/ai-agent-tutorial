@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 STORYBOOK_STATE_KEY = "storybook"
@@ -16,6 +16,25 @@ class GeneratedStoryPage(BaseModel):
 class GeneratedStory(BaseModel):
     theme: str
     pages: list[GeneratedStoryPage] = Field(min_length=5, max_length=5)
+
+
+class StoryWriterResponse(BaseModel):
+    status: Literal["needs_theme", "story_ready"]
+    message: str
+    theme: str = ""
+    pages: list[GeneratedStoryPage] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_story_shape(self):
+        if self.status == "story_ready":
+            if not self.theme.strip():
+                raise ValueError("theme must be present when the story is ready.")
+            if len(self.pages) != 5:
+                raise ValueError("story_ready responses must include exactly 5 pages.")
+        else:
+            if self.pages:
+                raise ValueError("needs_theme responses must not include story pages.")
+        return self
 
 
 class StoryPageState(BaseModel):
@@ -61,3 +80,12 @@ def create_storybook_state_from_generated_story(generated_story: GeneratedStory)
         ],
         error=None,
     ).model_dump()
+
+
+def create_generated_story_from_writer_response(
+    writer_response: StoryWriterResponse,
+) -> GeneratedStory:
+    return GeneratedStory(
+        theme=writer_response.theme,
+        pages=writer_response.pages,
+    )
