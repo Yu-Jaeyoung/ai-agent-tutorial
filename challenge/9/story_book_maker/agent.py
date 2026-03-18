@@ -22,13 +22,12 @@ from .settings import (
 )
 from .state import (
     STORYBOOK_STATE_KEY,
-    TEMP_STORY_DRAFT_STATE_KEY,
     StoryWriterResponse,
     StoryPageState,
     create_failed_storybook_state,
     create_empty_storybook_state,
     create_generated_story_from_writer_response,
-    create_illustration_ready_storybook_state,
+    create_storybook_state_with_page_image_ref,
     create_storybook_state_from_generated_story,
     load_storybook_state,
 )
@@ -42,30 +41,12 @@ def ensure_storybook_state(callback_context: CallbackContext):
     return None
 
 
-def persist_generated_story(callback_context: CallbackContext):
-    raw_story_draft = callback_context.state.get(TEMP_STORY_DRAFT_STATE_KEY)
-    if not isinstance(raw_story_draft, str) or not raw_story_draft.strip():
-        return None
-
-    try:
-        writer_response = StoryWriterResponse.model_validate_json(raw_story_draft)
-    except Exception:
-        return None
-
-    if writer_response.status == "needs_theme":
-        callback_context.state[STORYBOOK_STATE_KEY] = create_empty_storybook_state()
-        return build_text_content(writer_response.message)
-
-    generated_story = create_generated_story_from_writer_response(writer_response)
-    callback_context.state[STORYBOOK_STATE_KEY] = (
-        create_storybook_state_from_generated_story(generated_story)
-    )
-    callback_context.state[TEMP_STORY_DRAFT_STATE_KEY] = raw_story_draft
-    return build_text_content(summarize_story_ready(generated_story.theme))
-
-
 def build_text_content(message: str) -> types.Content:
     return types.Content(role="model", parts=[types.Part.from_text(text=message)])
+
+
+def build_empty_content() -> types.Content:
+    return types.Content(role="model", parts=[])
 
 
 def summarize_story_ready(theme: str) -> str:
@@ -132,6 +113,75 @@ def build_theme_seed(theme: str) -> int:
 
 def format_display_text(text: str) -> str:
     return json.dumps(text, ensure_ascii=False)
+
+
+def extract_user_text(callback_context: CallbackContext) -> str:
+    user_content = callback_context.user_content
+    if not user_content or not user_content.parts:
+        return ""
+    text_parts = [
+        part.text.strip()
+        for part in user_content.parts
+        if getattr(part, "text", None) and part.text.strip()
+    ]
+    return "\n".join(text_parts).strip()
+
+
+def extract_response_text(response) -> str:
+    if getattr(response, "text", None):
+        return response.text.strip()
+
+    for candidate in response.candidates or []:
+        if not candidate.content:
+            continue
+        text_parts = [
+            part.text.strip()
+            for part in candidate.content.parts or []
+            if getattr(part, "text", None) and part.text.strip()
+        ]
+        if text_parts:
+            return "\n".join(text_parts).strip()
+
+    return ""
+
+
+async def generate_storybook_story(callback_context: CallbackContext):
+    user_text = extract_user_text(callback_context)
+    if not user_text:
+        callback_context.state[STORYBOOK_STATE_KEY] = create_empty_storybook_state()
+        return build_text_content(
+            "Please enter one clear theme for a 5-page children's story."
+        )
+
+    try:
+        client = Client(api_key=GOOGLE_API_KEY)
+        response = client.models.generate_content(
+            model=STORY_WRITER_MODEL,
+            contents=[user_text],
+            config=types.GenerateContentConfig(
+                system_instruction=STORY_WRITER_AGENT_INSTRUCTION,
+                response_mime_type="application/json",
+                temperature=0.2,
+            ),
+        )
+        raw_story_draft = extract_response_text(response)
+        writer_response = StoryWriterResponse.model_validate_json(raw_story_draft)
+    except Exception as error:
+        callback_context.state[STORYBOOK_STATE_KEY] = create_failed_storybook_state(
+            callback_context.state.get(STORYBOOK_STATE_KEY),
+            f"story_generation_failed: {error}",
+        )
+        return build_text_content("Story generation failed. Please try again.")
+
+    if writer_response.status == "needs_theme":
+        callback_context.state[STORYBOOK_STATE_KEY] = create_empty_storybook_state()
+        return build_text_content(writer_response.message)
+
+    generated_story = create_generated_story_from_writer_response(writer_response)
+    callback_context.state[STORYBOOK_STATE_KEY] = (
+        create_storybook_state_from_generated_story(generated_story)
+    )
+    return build_text_content(summarize_story_ready(generated_story.theme))
 
 
 def build_page_illustration_prompt(storybook_state, page: StoryPageState) -> str:
@@ -253,28 +303,60 @@ def format_storybook_result(storybook_state) -> str:
                     f"Image: {image_line}",
                 ]
             )
-        )
+    )
     return "\n\n".join(sections)
 
 
-async def generate_storybook_illustrations(callback_context: CallbackContext):
+def find_story_page(storybook_state, page_number: int) -> StoryPageState | None:
+    for page in storybook_state.pages:
+        if page.page_number == page_number:
+            return page
+    return None
+
+
+def format_page_result(page: StoryPageState) -> str:
+    return "\n".join(
+        [
+            f"Page {page.page_number}:",
+            f"Text: {format_display_text(page.page_text)}",
+            f"Visual: {format_display_text(page.visual_description)}",
+            "Image: [생성된 이미지가 Artifact로 저장됨]",
+        ]
+    )
+
+
+async def maybe_skip_illustration_workflow(callback_context: CallbackContext):
     storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
+    if storybook_state.status in {"story_ready", "illustration_ready"} and len(storybook_state.pages) == 5:
+        return None
+    return build_empty_content()
 
-    if (
-        storybook_state.status == "illustration_ready"
-        and len(storybook_state.pages) == 5
-        and all(page.image_ref for page in storybook_state.pages)
-    ):
-        return build_text_content(format_storybook_result(storybook_state))
 
-    if storybook_state.status != "story_ready" or len(storybook_state.pages) != 5:
-        return build_text_content("Illustration data is not ready yet.")
+def build_page_illustration_callback(page_number: int):
+    async def generate_single_page_illustration(callback_context: CallbackContext):
+        storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
 
-    try:
-        client = Client(api_key=GOOGLE_API_KEY)
-        existing_artifacts = await callback_context.list_artifacts()
-        image_refs: list[str] = []
-        for page in storybook_state.pages:
+        if storybook_state.status not in {"story_ready", "illustration_ready"}:
+            return build_empty_content()
+
+        page = find_story_page(storybook_state, page_number)
+        if page is None:
+            return build_empty_content()
+
+        if page.image_ref:
+            saved_artifact = await callback_context.load_artifact(page.image_ref)
+            if saved_artifact and saved_artifact.inline_data and saved_artifact.inline_data.data:
+                save_local_image_bytes(
+                    theme=storybook_state.theme,
+                    page_number=page.page_number,
+                    image_bytes=saved_artifact.inline_data.data,
+                    mime_type=saved_artifact.inline_data.mime_type or "image/jpeg",
+                )
+            return build_text_content(format_page_result(page))
+
+        try:
+            client = Client(api_key=GOOGLE_API_KEY)
+            existing_artifacts = await callback_context.list_artifacts()
             artifact_filename, artifact, local_image_data = generate_page_illustration(
                 client=client,
                 storybook_state=storybook_state,
@@ -286,7 +368,6 @@ async def generate_storybook_illustrations(callback_context: CallbackContext):
                     filename=artifact_filename,
                     artifact=artifact,
                 )
-                existing_artifacts.append(artifact_filename)
                 image_bytes, mime_type = local_image_data
                 save_local_image_bytes(
                     theme=storybook_state.theme,
@@ -303,59 +384,28 @@ async def generate_storybook_illustrations(callback_context: CallbackContext):
                         image_bytes=saved_artifact.inline_data.data,
                         mime_type=saved_artifact.inline_data.mime_type or "image/jpeg",
                     )
-            image_refs.append(artifact_filename)
-    except Exception as error:
-        callback_context.state[STORYBOOK_STATE_KEY] = create_failed_storybook_state(
+        except Exception as error:
+            callback_context.state[STORYBOOK_STATE_KEY] = create_failed_storybook_state(
+                callback_context.state.get(STORYBOOK_STATE_KEY),
+                f"illustration_generation_failed: {error}",
+            )
+            return build_text_content(
+                f"Page {page_number} illustration generation failed. Please try again."
+            )
+
+        callback_context.state[STORYBOOK_STATE_KEY] = create_storybook_state_with_page_image_ref(
             callback_context.state.get(STORYBOOK_STATE_KEY),
-            f"illustration_generation_failed: {error}",
-        )
-        return build_text_content(
-            "Illustration generation failed. The shared storybook state is now marked as failed."
+            page_number=page_number,
+            image_ref=artifact_filename,
         )
 
-    callback_context.state[STORYBOOK_STATE_KEY] = create_illustration_ready_storybook_state(
-        callback_context.state.get(STORYBOOK_STATE_KEY),
-        image_refs,
-    )
-    return build_text_content(
-        format_storybook_result(
-            load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
+        updated_storybook_state = load_storybook_state(
+            callback_context.state.get(STORYBOOK_STATE_KEY)
         )
-    )
+        updated_page = find_story_page(updated_storybook_state, page_number)
+        return build_text_content(format_page_result(updated_page))
 
-
-def build_illustrator_instruction(readonly_context):
-    storybook_state = load_storybook_state(readonly_context.state.get(STORYBOOK_STATE_KEY))
-
-    if storybook_state.status == "illustration_ready":
-        return (
-            f"{ILLUSTRATOR_AGENT_INSTRUCTION}\n\n"
-            f"Current theme: {storybook_state.theme!r}\n"
-            "Current storybook result:\n"
-            f"{format_storybook_result(storybook_state)}"
-        )
-
-    if storybook_state.status != "story_ready" or len(storybook_state.pages) != 5:
-        return (
-            f"{ILLUSTRATOR_AGENT_INSTRUCTION}\n\n"
-            "Current storybook state: story data is not ready for illustration yet."
-        )
-
-    page_summaries = "\n".join(
-        (
-            f"- Page {page.page_number}: "
-            f"text={page.page_text!r}, "
-            f"visual_description={page.visual_description!r}"
-        )
-        for page in storybook_state.pages
-    )
-
-    return (
-        f"{ILLUSTRATOR_AGENT_INSTRUCTION}\n\n"
-        f"Current theme: {storybook_state.theme!r}\n"
-        "Current pages ready for illustration:\n"
-        f"{page_summaries}"
-    )
+    return generate_single_page_illustration
 
 
 story_writer_agent = Agent(
@@ -363,21 +413,28 @@ story_writer_agent = Agent(
     model=STORY_WRITER_MODEL,
     description=STORY_WRITER_AGENT_DESCRIPTION,
     instruction=STORY_WRITER_AGENT_INSTRUCTION,
-    generate_content_config=types.GenerateContentConfig(
-        response_mime_type="application/json",
-        temperature=0.2,
-    ),
     before_agent_callback=ensure_storybook_state,
-    output_key=TEMP_STORY_DRAFT_STATE_KEY,
-    after_agent_callback=persist_generated_story,
+    after_agent_callback=None,
 )
 
-illustrator_agent = Agent(
+story_writer_agent.before_agent_callback = [ensure_storybook_state, generate_storybook_story]
+
+page_illustrator_agents = [
+    Agent(
+        name=f"IllustratorPage{page_number}Agent",
+        model=ILLUSTRATOR_MODEL,
+        description=f"Generates and reports the illustration for page {page_number}.",
+        instruction=ILLUSTRATOR_AGENT_INSTRUCTION,
+        before_agent_callback=build_page_illustration_callback(page_number),
+    )
+    for page_number in range(1, 6)
+]
+
+illustrator_agent = SequentialAgent(
     name="IllustratorAgent",
-    model=ILLUSTRATOR_MODEL,
     description=ILLUSTRATOR_AGENT_DESCRIPTION,
-    instruction=build_illustrator_instruction,
-    before_agent_callback=generate_storybook_illustrations,
+    before_agent_callback=maybe_skip_illustration_workflow,
+    sub_agents=page_illustrator_agents,
 )
 
 root_agent = SequentialAgent(

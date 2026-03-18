@@ -121,6 +121,38 @@ def create_illustration_ready_storybook_state(
     ).model_dump()
 
 
+def create_storybook_state_with_page_image_ref(
+    raw_storybook: object | None,
+    page_number: int,
+    image_ref: str,
+) -> dict:
+    storybook_state = load_storybook_state(raw_storybook)
+
+    updated_pages = []
+    for page in storybook_state.pages:
+        updated_pages.append(
+            StoryPageState(
+                page_number=page.page_number,
+                page_text=page.page_text,
+                visual_description=page.visual_description,
+                image_ref=image_ref if page.page_number == page_number else page.image_ref,
+            )
+        )
+
+    status = (
+        "illustration_ready"
+        if updated_pages and all(page.image_ref for page in updated_pages)
+        else storybook_state.status
+    )
+
+    return StorybookState(
+        theme=storybook_state.theme,
+        status=status,
+        pages=updated_pages,
+        error=None,
+    ).model_dump()
+
+
 def create_failed_storybook_state(
     raw_storybook: object | None,
     error: str,
