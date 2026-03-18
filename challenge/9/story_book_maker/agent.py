@@ -1,5 +1,5 @@
 from google.adk.agents.callback_context import CallbackContext
-from google.adk.agents import Agent
+from google.adk.agents import Agent, SequentialAgent
 from google.genai import types
 
 from .prompt import (
@@ -97,4 +97,8 @@ illustrator_agent = Agent(
     instruction=build_illustrator_instruction,
 )
 
-root_agent = story_writer_agent
+root_agent = SequentialAgent(
+    name="StoryBookWorkflow",
+    description="Runs story writing first and then passes the shared state to the illustrator stage.",
+    sub_agents=[story_writer_agent, illustrator_agent],
+)

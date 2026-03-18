@@ -1,4 +1,4 @@
-# TODO: Expand the prompt again when the illustrator handoff is introduced.
+# TODO: Expand the prompts again when image generation and image refs are implemented.
 STORY_WRITER_AGENT_DESCRIPTION = """
 The entry agent for Story Book Maker v1.
 It receives one theme and writes a structured 5-page children's story that can be used by later agents.
