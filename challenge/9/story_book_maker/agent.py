@@ -175,7 +175,7 @@ def summarize_image_refs(storybook_state) -> str:
     )
 
 
-def generate_storybook_illustrations(callback_context: CallbackContext):
+async def generate_storybook_illustrations(callback_context: CallbackContext):
     storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
 
     if (
@@ -190,7 +190,7 @@ def generate_storybook_illustrations(callback_context: CallbackContext):
 
     try:
         client = Client(api_key=GOOGLE_API_KEY)
-        existing_artifacts = callback_context.list_artifacts()
+        existing_artifacts = await callback_context.list_artifacts()
         image_refs: list[str] = []
         for page in storybook_state.pages:
             artifact_filename, artifact = generate_page_illustration(
@@ -200,7 +200,7 @@ def generate_storybook_illustrations(callback_context: CallbackContext):
                 existing_artifacts=existing_artifacts,
             )
             if artifact is not None:
-                callback_context.save_artifact(
+                await callback_context.save_artifact(
                     filename=artifact_filename,
                     artifact=artifact,
                 )
