@@ -1,5 +1,7 @@
 import hashlib
+import json
 import re
+from pathlib import Path
 
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents import Agent, SequentialAgent
@@ -12,6 +14,7 @@ from .prompt import (
     STORY_WRITER_AGENT_INSTRUCTION,
 )
 from .settings import (
+    GENERATED_IMAGES_DIR,
     GOOGLE_API_KEY,
     ILLUSTRATION_ASPECT_RATIO,
     ILLUSTRATOR_MODEL,
@@ -77,6 +80,27 @@ def slugify_theme(theme: str) -> str:
     return slug or "storybook"
 
 
+def build_local_output_dir(theme: str) -> Path:
+    output_dir = GENERATED_IMAGES_DIR / slugify_theme(theme)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def build_local_image_path(theme: str, page_number: int, mime_type: str) -> Path:
+    return build_local_output_dir(theme) / f"page_{page_number}{mime_type_to_extension(mime_type)}"
+
+
+def save_local_image_bytes(
+    theme: str,
+    page_number: int,
+    image_bytes: bytes,
+    mime_type: str,
+) -> str:
+    image_path = build_local_image_path(theme, page_number, mime_type)
+    image_path.write_bytes(image_bytes)
+    return str(image_path.resolve())
+
+
 def build_storybook_style_guide() -> str:
     return """
 Shared art direction:
@@ -104,6 +128,10 @@ def build_storybook_overview(storybook_state) -> str:
 def build_theme_seed(theme: str) -> int:
     digest = hashlib.sha256(theme.encode("utf-8")).hexdigest()
     return int(digest[:8], 16)
+
+
+def format_display_text(text: str) -> str:
+    return json.dumps(text, ensure_ascii=False)
 
 
 def build_page_illustration_prompt(storybook_state, page: StoryPageState) -> str:
@@ -178,14 +206,14 @@ def generate_page_illustration(
     storybook_state,
     page: StoryPageState,
     existing_artifacts: list[str],
-) -> tuple[str, types.Part | None]:
+) -> tuple[str, types.Part | None, tuple[bytes, str] | None]:
     existing_artifact = find_existing_page_artifact(
         existing_artifacts=existing_artifacts,
         theme=storybook_state.theme,
         page_number=page.page_number,
     )
     if existing_artifact:
-        return existing_artifact, None
+        return existing_artifact, None, None
 
     response = client.models.generate_content(
         model=ILLUSTRATOR_MODEL,
@@ -209,19 +237,24 @@ def generate_page_illustration(
             mime_type=mime_type,
         )
     )
-    return artifact_filename, artifact
+    return artifact_filename, artifact, (image_bytes, mime_type)
 
 
-def summarize_image_refs(storybook_state) -> str:
-    page_lines = "\n".join(
-        f"- Page {page.page_number}: {page.image_ref}"
-        for page in storybook_state.pages
-    )
-    return (
-        f"Illustrations are ready for '{storybook_state.theme}'.\n"
-        "Saved image references:\n"
-        f"{page_lines}"
-    )
+def format_storybook_result(storybook_state) -> str:
+    sections = []
+    for page in storybook_state.pages:
+        image_line = "[생성된 이미지가 Artifact로 저장됨]"
+        sections.append(
+            "\n".join(
+                [
+                    f"Page {page.page_number}:",
+                    f"Text: {format_display_text(page.page_text)}",
+                    f"Visual: {format_display_text(page.visual_description)}",
+                    f"Image: {image_line}",
+                ]
+            )
+        )
+    return "\n\n".join(sections)
 
 
 async def generate_storybook_illustrations(callback_context: CallbackContext):
@@ -232,7 +265,7 @@ async def generate_storybook_illustrations(callback_context: CallbackContext):
         and len(storybook_state.pages) == 5
         and all(page.image_ref for page in storybook_state.pages)
     ):
-        return build_text_content(summarize_image_refs(storybook_state))
+        return build_text_content(format_storybook_result(storybook_state))
 
     if storybook_state.status != "story_ready" or len(storybook_state.pages) != 5:
         return build_text_content("Illustration data is not ready yet.")
@@ -242,7 +275,7 @@ async def generate_storybook_illustrations(callback_context: CallbackContext):
         existing_artifacts = await callback_context.list_artifacts()
         image_refs: list[str] = []
         for page in storybook_state.pages:
-            artifact_filename, artifact = generate_page_illustration(
+            artifact_filename, artifact, local_image_data = generate_page_illustration(
                 client=client,
                 storybook_state=storybook_state,
                 page=page,
@@ -254,6 +287,22 @@ async def generate_storybook_illustrations(callback_context: CallbackContext):
                     artifact=artifact,
                 )
                 existing_artifacts.append(artifact_filename)
+                image_bytes, mime_type = local_image_data
+                save_local_image_bytes(
+                    theme=storybook_state.theme,
+                    page_number=page.page_number,
+                    image_bytes=image_bytes,
+                    mime_type=mime_type,
+                )
+            else:
+                saved_artifact = await callback_context.load_artifact(artifact_filename)
+                if saved_artifact and saved_artifact.inline_data and saved_artifact.inline_data.data:
+                    save_local_image_bytes(
+                        theme=storybook_state.theme,
+                        page_number=page.page_number,
+                        image_bytes=saved_artifact.inline_data.data,
+                        mime_type=saved_artifact.inline_data.mime_type or "image/jpeg",
+                    )
             image_refs.append(artifact_filename)
     except Exception as error:
         callback_context.state[STORYBOOK_STATE_KEY] = create_failed_storybook_state(
@@ -269,7 +318,7 @@ async def generate_storybook_illustrations(callback_context: CallbackContext):
         image_refs,
     )
     return build_text_content(
-        summarize_image_refs(
+        format_storybook_result(
             load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
         )
     )
@@ -282,8 +331,8 @@ def build_illustrator_instruction(readonly_context):
         return (
             f"{ILLUSTRATOR_AGENT_INSTRUCTION}\n\n"
             f"Current theme: {storybook_state.theme!r}\n"
-            "Current stored image refs:\n"
-            f"{summarize_image_refs(storybook_state)}"
+            "Current storybook result:\n"
+            f"{format_storybook_result(storybook_state)}"
         )
 
     if storybook_state.status != "story_ready" or len(storybook_state.pages) != 5:

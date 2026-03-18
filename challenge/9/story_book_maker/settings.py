@@ -1,3 +1,4 @@
+from pathlib import Path
 import os
 
 import dotenv
@@ -25,3 +26,5 @@ ILLUSTRATION_ASPECT_RATIO = os.getenv(
     "ILLUSTRATION_ASPECT_RATIO",
     "4:3",
 )
+
+GENERATED_IMAGES_DIR = Path(__file__).resolve().parent / "generated"
