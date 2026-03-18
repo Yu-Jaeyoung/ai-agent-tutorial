@@ -63,7 +63,7 @@ def persist_generated_story(callback_context: CallbackContext):
 
 
 def build_text_content(message: str) -> types.Content:
-    return types.Content(role="model", parts=[types.Part.from_text(message)])
+    return types.Content(role="model", parts=[types.Part.from_text(text=message)])
 
 
 def slugify_theme(theme: str) -> str:
