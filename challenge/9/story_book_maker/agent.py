@@ -50,18 +50,25 @@ def persist_generated_story(callback_context: CallbackContext):
 
     if writer_response.status == "needs_theme":
         callback_context.state[STORYBOOK_STATE_KEY] = create_empty_storybook_state()
-        return None
+        return build_text_content(writer_response.message)
 
     generated_story = create_generated_story_from_writer_response(writer_response)
     callback_context.state[STORYBOOK_STATE_KEY] = (
         create_storybook_state_from_generated_story(generated_story)
     )
     callback_context.state[TEMP_STORY_DRAFT_STATE_KEY] = raw_story_draft
-    return None
+    return build_text_content(summarize_story_ready(generated_story.theme))
 
 
 def build_text_content(message: str) -> types.Content:
     return types.Content(role="model", parts=[types.Part.from_text(text=message)])
+
+
+def summarize_story_ready(theme: str) -> str:
+    return (
+        f"Created a 5-page story for '{theme}'.\n"
+        "Starting the illustration step now."
+    )
 
 
 def slugify_theme(theme: str) -> str:
@@ -166,11 +173,12 @@ def generate_page_illustration(
 
 def summarize_image_refs(storybook_state) -> str:
     page_lines = "\n".join(
-        f"- Page {page.page_number}: image_ref={page.image_ref!r}"
+        f"- Page {page.page_number}: {page.image_ref}"
         for page in storybook_state.pages
     )
     return (
-        "Illustrations are ready and image_ref values were stored in shared state.\n"
+        f"Illustrations are ready for '{storybook_state.theme}'.\n"
+        "Saved image references:\n"
         f"{page_lines}"
     )
 
@@ -219,7 +227,11 @@ async def generate_storybook_illustrations(callback_context: CallbackContext):
         callback_context.state.get(STORYBOOK_STATE_KEY),
         image_refs,
     )
-    return None
+    return build_text_content(
+        summarize_image_refs(
+            load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
+        )
+    )
 
 
 def build_illustrator_instruction(readonly_context):
