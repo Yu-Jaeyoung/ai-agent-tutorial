@@ -447,40 +447,6 @@ def format_storybook_failure(storybook_state) -> str:
     return "\n".join(sections)
 
 
-async def build_storybook_gallery_content(
-    callback_context: CallbackContext,
-    storybook_state,
-) -> types.Content:
-    parts: list[types.Part] = [
-        types.Part.from_text(text=f'Title: "{storybook_state.title}"')
-    ]
-
-    for page in storybook_state.pages:
-        if not page.page_image_ref:
-            parts.append(
-                types.Part.from_text(
-                    text=f"Page {page.page_number} image is missing."
-                )
-            )
-            continue
-
-        page_artifact = await callback_context.load_artifact(page.page_image_ref)
-        if (
-            page_artifact
-            and page_artifact.inline_data
-            and page_artifact.inline_data.data
-        ):
-            parts.append(page_artifact)
-        else:
-            parts.append(
-                types.Part.from_text(
-                    text=f"Page {page.page_number} artifact could not be loaded."
-                )
-            )
-
-    return build_content_with_parts(parts)
-
-
 def find_story_page(storybook_state, page_number: int) -> StoryPageState | None:
     for page in storybook_state.pages:
         if page.page_number == page_number:
@@ -546,7 +512,7 @@ async def maybe_skip_storybook_result(callback_context: CallbackContext):
     return build_empty_content()
 
 
-async def render_storybook_result(callback_context: CallbackContext):
+def render_storybook_title(callback_context: CallbackContext):
     storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
     if storybook_state.status == "failed":
         return build_text_content(format_storybook_failure(storybook_state))
@@ -559,7 +525,41 @@ async def render_storybook_result(callback_context: CallbackContext):
         page_image_refs=page_image_refs,
     )
     updated_storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
-    return await build_storybook_gallery_content(callback_context, updated_storybook_state)
+    return build_text_content(f'Title: "{updated_storybook_state.title}"')
+
+
+def build_storybook_page_display_callback(page_number: int):
+    async def render_storybook_page(callback_context: CallbackContext):
+        storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
+        if storybook_state.status != "illustration_ready":
+            return build_empty_content()
+
+        page = find_story_page(storybook_state, page_number)
+        if page is None or not page.page_image_ref:
+            return build_empty_content()
+
+        page_artifact = await callback_context.load_artifact(page.page_image_ref)
+        if (
+            page_artifact
+            and page_artifact.inline_data
+            and page_artifact.inline_data.data
+        ):
+            return build_content_with_parts(
+                [
+                    types.Part(
+                        inline_data=types.Blob(
+                            data=page_artifact.inline_data.data,
+                            mime_type=page_artifact.inline_data.mime_type or "image/png",
+                        )
+                    )
+                ]
+            )
+
+        return build_text_content(
+            f"Page {page_number} storybook image could not be loaded."
+        )
+
+    return render_storybook_page
 
 
 def build_page_illustration_callback(page_number: int):
@@ -804,12 +804,30 @@ illustration_workflow_agent = ParallelAgent(
 
 illustrator_agent = illustration_workflow_agent
 
-storybook_result_agent = Agent(
-    name="StorybookResultAgent",
+storybook_title_agent = Agent(
+    name="StorybookTitleAgent",
     model=STORY_WRITER_MODEL,
-    description="Formats the completed storybook output after illustration finishes.",
-    instruction="Render the completed storybook result.",
-    before_agent_callback=[ensure_storybook_state, maybe_skip_storybook_result, render_storybook_result],
+    description="Shows the completed storybook title after illustration finishes.",
+    instruction="Render the completed storybook title.",
+    before_agent_callback=[ensure_storybook_state, render_storybook_title],
+)
+
+storybook_page_display_agents = [
+    Agent(
+        name=f"StorybookPage{page_number}DisplayAgent",
+        model=ILLUSTRATOR_MODEL,
+        description=f"Displays the completed storybook page image for page {page_number}.",
+        instruction=f"Display the completed storybook page image for page {page_number}.",
+        before_agent_callback=build_storybook_page_display_callback(page_number),
+    )
+    for page_number in range(1, 6)
+]
+
+storybook_result_agent = SequentialAgent(
+    name="StorybookResultAgent",
+    description="Shows the completed storybook title and the five composed page images.",
+    before_agent_callback=maybe_skip_storybook_result,
+    sub_agents=[storybook_title_agent, *storybook_page_display_agents],
 )
 
 root_agent = SequentialAgent(
