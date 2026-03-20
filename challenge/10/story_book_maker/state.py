@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, model_validator
 
 STORYBOOK_STATE_KEY = "storybook"
 TEMP_STORY_DRAFT_STATE_KEY = "temp:story_writer_story_draft"
+PAGE_ILLUSTRATION_REF_STATE_KEY_PREFIX = "storybook:page_illustration_ref:"
 PAGE_IMAGE_REF_STATE_KEY_PREFIX = "storybook:page_image_ref:"
 
 
@@ -48,6 +49,8 @@ class StoryPageState(BaseModel):
     page_number: int
     page_text: str = ""
     visual_description: str = ""
+    illustration_ref: str | None = None
+    page_image_ref: str | None = None
     image_ref: str | None = None
 
 
@@ -84,6 +87,8 @@ def create_storybook_state_from_generated_story(generated_story: GeneratedStory)
                 page_number=page.page_number,
                 page_text=page.page_text,
                 visual_description=page.visual_description,
+                illustration_ref=None,
+                page_image_ref=None,
                 image_ref=None,
             )
             for page in generated_story.pages
@@ -125,6 +130,8 @@ def create_illustration_ready_storybook_state(
                 page_number=page.page_number,
                 page_text=page.page_text,
                 visual_description=page.visual_description,
+                illustration_ref=None,
+                page_image_ref=image_ref,
                 image_ref=image_ref,
             )
             for page, image_ref in zip(storybook_state.pages, image_refs, strict=True)
@@ -147,13 +154,15 @@ def create_storybook_state_with_page_image_ref(
                 page_number=page.page_number,
                 page_text=page.page_text,
                 visual_description=page.visual_description,
+                illustration_ref=page.illustration_ref,
+                page_image_ref=image_ref if page.page_number == page_number else page.page_image_ref,
                 image_ref=image_ref if page.page_number == page_number else page.image_ref,
             )
         )
 
     status = (
         "illustration_ready"
-        if updated_pages and all(page.image_ref for page in updated_pages)
+        if updated_pages and all(page.page_image_ref for page in updated_pages)
         else "illustration_in_progress"
     )
 
@@ -166,22 +175,63 @@ def create_storybook_state_with_page_image_ref(
     ).model_dump()
 
 
+def build_page_illustration_ref_state_key(page_number: int) -> str:
+    return f"{PAGE_ILLUSTRATION_REF_STATE_KEY_PREFIX}{page_number}"
+
+
 def build_page_image_ref_state_key(page_number: int) -> str:
     return f"{PAGE_IMAGE_REF_STATE_KEY_PREFIX}{page_number}"
 
 
-def extract_page_image_refs(raw_state: Mapping[str, object], total_pages: int) -> dict[int, str]:
+def extract_page_artifact_refs(
+    raw_state: Mapping[str, object],
+    total_pages: int,
+    key_builder,
+) -> dict[int, str]:
     image_refs: dict[int, str] = {}
     for page_number in range(1, total_pages + 1):
-        image_ref = raw_state.get(build_page_image_ref_state_key(page_number))
+        image_ref = raw_state.get(key_builder(page_number))
         if isinstance(image_ref, str) and image_ref.strip():
             image_refs[page_number] = image_ref
     return image_refs
 
 
+def extract_page_illustration_refs(raw_state: Mapping[str, object], total_pages: int) -> dict[int, str]:
+    return extract_page_artifact_refs(
+        raw_state=raw_state,
+        total_pages=total_pages,
+        key_builder=build_page_illustration_ref_state_key,
+    )
+
+
+def extract_page_image_refs(raw_state: Mapping[str, object], total_pages: int) -> dict[int, str]:
+    return extract_page_artifact_refs(
+        raw_state=raw_state,
+        total_pages=total_pages,
+        key_builder=build_page_image_ref_state_key,
+    )
+
+
 def create_storybook_state_from_page_image_refs(
     raw_storybook: object | None,
     image_refs: Mapping[int, str],
+) -> dict:
+    storybook_state = load_storybook_state(raw_storybook)
+    return create_storybook_state_from_page_asset_refs(
+        raw_storybook=raw_storybook,
+        illustration_refs={
+            page.page_number: page.illustration_ref
+            for page in storybook_state.pages
+            if page.illustration_ref
+        },
+        page_image_refs=image_refs,
+    )
+
+
+def create_storybook_state_from_page_asset_refs(
+    raw_storybook: object | None,
+    illustration_refs: Mapping[int, str],
+    page_image_refs: Mapping[int, str],
 ) -> dict:
     storybook_state = load_storybook_state(raw_storybook)
     updated_pages = []
@@ -191,13 +241,15 @@ def create_storybook_state_from_page_image_refs(
                 page_number=page.page_number,
                 page_text=page.page_text,
                 visual_description=page.visual_description,
-                image_ref=image_refs.get(page.page_number),
+                illustration_ref=illustration_refs.get(page.page_number),
+                page_image_ref=page_image_refs.get(page.page_number),
+                image_ref=page_image_refs.get(page.page_number),
             )
         )
 
     status = (
         "illustration_ready"
-        if updated_pages and all(page.image_ref for page in updated_pages)
+        if updated_pages and all(page.page_image_ref for page in updated_pages)
         else "illustration_in_progress"
     )
 
