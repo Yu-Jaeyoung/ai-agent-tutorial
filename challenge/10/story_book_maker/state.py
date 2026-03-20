@@ -1,10 +1,11 @@
-from typing import Literal
+from typing import Literal, Mapping
 
 from pydantic import BaseModel, Field, model_validator
 
 
 STORYBOOK_STATE_KEY = "storybook"
 TEMP_STORY_DRAFT_STATE_KEY = "temp:story_writer_story_draft"
+PAGE_IMAGE_REF_STATE_KEY_PREFIX = "storybook:page_image_ref:"
 
 
 class GeneratedStoryPage(BaseModel):
@@ -162,6 +163,71 @@ def create_storybook_state_with_page_image_ref(
         status=status,
         pages=updated_pages,
         error=None,
+    ).model_dump()
+
+
+def build_page_image_ref_state_key(page_number: int) -> str:
+    return f"{PAGE_IMAGE_REF_STATE_KEY_PREFIX}{page_number}"
+
+
+def extract_page_image_refs(raw_state: Mapping[str, object], total_pages: int) -> dict[int, str]:
+    image_refs: dict[int, str] = {}
+    for page_number in range(1, total_pages + 1):
+        image_ref = raw_state.get(build_page_image_ref_state_key(page_number))
+        if isinstance(image_ref, str) and image_ref.strip():
+            image_refs[page_number] = image_ref
+    return image_refs
+
+
+def create_storybook_state_from_page_image_refs(
+    raw_storybook: object | None,
+    image_refs: Mapping[int, str],
+) -> dict:
+    storybook_state = load_storybook_state(raw_storybook)
+    updated_pages = []
+    for page in storybook_state.pages:
+        updated_pages.append(
+            StoryPageState(
+                page_number=page.page_number,
+                page_text=page.page_text,
+                visual_description=page.visual_description,
+                image_ref=image_refs.get(page.page_number),
+            )
+        )
+
+    status = (
+        "illustration_ready"
+        if updated_pages and all(page.image_ref for page in updated_pages)
+        else "illustration_in_progress"
+    )
+
+    return StorybookState(
+        title=storybook_state.title,
+        theme=storybook_state.theme,
+        status=status,
+        pages=updated_pages,
+        error=None,
+    ).model_dump()
+
+
+def create_storybook_state_with_status(
+    raw_storybook: object | None,
+    status: Literal[
+        "waiting_for_theme",
+        "theme_received",
+        "story_ready",
+        "illustration_in_progress",
+        "illustration_ready",
+        "failed",
+    ],
+) -> dict:
+    storybook_state = load_storybook_state(raw_storybook)
+    return StorybookState(
+        title=storybook_state.title,
+        theme=storybook_state.theme,
+        status=status,
+        pages=storybook_state.pages,
+        error=storybook_state.error,
     ).model_dump()
 
 

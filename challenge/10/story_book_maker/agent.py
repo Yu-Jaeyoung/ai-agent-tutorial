@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 from google.adk.agents.callback_context import CallbackContext
-from google.adk.agents import Agent, SequentialAgent
+from google.adk.agents import Agent, ParallelAgent, SequentialAgent
 from google.genai import Client, types
 
 from .prompt import (
@@ -24,11 +24,13 @@ from .state import (
     STORYBOOK_STATE_KEY,
     StoryWriterResponse,
     StoryPageState,
+    build_page_image_ref_state_key,
     create_failed_storybook_state,
     create_empty_storybook_state,
     create_generated_story_from_writer_response,
-    create_storybook_state_with_page_image_ref,
+    create_storybook_state_with_status,
     create_storybook_state_from_generated_story,
+    extract_page_image_refs,
     load_storybook_state,
 )
 
@@ -326,14 +328,20 @@ def format_page_result(page: StoryPageState) -> str:
 
 async def maybe_skip_illustration_workflow(callback_context: CallbackContext):
     storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
-    if storybook_state.status in {"story_ready", "illustration_ready"} and len(storybook_state.pages) == 5:
+    if storybook_state.status in {"story_ready", "illustration_in_progress", "illustration_ready"} and len(storybook_state.pages) == 5:
+        if storybook_state.status == "story_ready":
+            callback_context.state[STORYBOOK_STATE_KEY] = create_storybook_state_with_status(
+                callback_context.state.get(STORYBOOK_STATE_KEY),
+                status="illustration_in_progress",
+            )
         return None
     return build_empty_content()
 
 
 async def maybe_skip_storybook_result(callback_context: CallbackContext):
     storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
-    if storybook_state.status == "illustration_ready" and len(storybook_state.pages) == 5:
+    image_refs = extract_page_image_refs(callback_context.state, total_pages=5)
+    if len(image_refs) == 5 and len(storybook_state.pages) == 5:
         return None
     return build_empty_content()
 
@@ -346,15 +354,20 @@ def build_page_illustration_callback(page_number: int):
     async def generate_single_page_illustration(callback_context: CallbackContext):
         storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
 
-        if storybook_state.status not in {"story_ready", "illustration_ready"}:
+        if storybook_state.status not in {
+            "story_ready",
+            "illustration_in_progress",
+            "illustration_ready",
+        }:
             return build_empty_content()
 
         page = find_story_page(storybook_state, page_number)
         if page is None:
             return build_empty_content()
 
-        if page.image_ref:
-            saved_artifact = await callback_context.load_artifact(page.image_ref)
+        existing_image_ref = callback_context.state.get(build_page_image_ref_state_key(page_number))
+        if isinstance(existing_image_ref, str) and existing_image_ref.strip():
+            saved_artifact = await callback_context.load_artifact(existing_image_ref)
             if saved_artifact and saved_artifact.inline_data and saved_artifact.inline_data.data:
                 save_local_image_bytes(
                     theme=storybook_state.theme,
@@ -362,7 +375,8 @@ def build_page_illustration_callback(page_number: int):
                     image_bytes=saved_artifact.inline_data.data,
                     mime_type=saved_artifact.inline_data.mime_type or "image/jpeg",
                 )
-            return build_text_content(format_page_result(page))
+            cached_page = page.model_copy(update={"image_ref": existing_image_ref})
+            return build_text_content(format_page_result(cached_page))
 
         try:
             client = Client(api_key=GOOGLE_API_KEY)
@@ -403,16 +417,8 @@ def build_page_illustration_callback(page_number: int):
                 f"Page {page_number} illustration generation failed. Please try again."
             )
 
-        callback_context.state[STORYBOOK_STATE_KEY] = create_storybook_state_with_page_image_ref(
-            callback_context.state.get(STORYBOOK_STATE_KEY),
-            page_number=page_number,
-            image_ref=artifact_filename,
-        )
-
-        updated_storybook_state = load_storybook_state(
-            callback_context.state.get(STORYBOOK_STATE_KEY)
-        )
-        updated_page = find_story_page(updated_storybook_state, page_number)
+        callback_context.state[build_page_image_ref_state_key(page_number)] = artifact_filename
+        updated_page = page.model_copy(update={"image_ref": artifact_filename})
         return build_text_content(format_page_result(updated_page))
 
     return generate_single_page_illustration
@@ -457,9 +463,9 @@ page_illustrator_agents = [
     for page_number in range(1, 6)
 ]
 
-illustration_workflow_agent = SequentialAgent(
+illustration_workflow_agent = ParallelAgent(
     name="IllustrationWorkflow",
-    description=ILLUSTRATOR_AGENT_DESCRIPTION,
+    description="Runs the five page illustration agents in parallel.",
     before_agent_callback=maybe_skip_illustration_workflow,
     sub_agents=page_illustrator_agents,
 )
