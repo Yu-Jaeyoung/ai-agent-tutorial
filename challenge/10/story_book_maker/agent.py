@@ -57,6 +57,10 @@ def build_empty_content() -> types.Content:
     return types.Content(role="model", parts=[])
 
 
+def build_content_with_parts(parts: list[types.Part]) -> types.Content:
+    return types.Content(role="model", parts=parts)
+
+
 def announce_story_writing_started(callback_context: CallbackContext):
     return build_text_content("스토리 작성 중...")
 
@@ -443,6 +447,40 @@ def format_storybook_failure(storybook_state) -> str:
     return "\n".join(sections)
 
 
+async def build_storybook_gallery_content(
+    callback_context: CallbackContext,
+    storybook_state,
+) -> types.Content:
+    parts: list[types.Part] = [
+        types.Part.from_text(text=f'Title: "{storybook_state.title}"')
+    ]
+
+    for page in storybook_state.pages:
+        if not page.page_image_ref:
+            parts.append(
+                types.Part.from_text(
+                    text=f"Page {page.page_number} image is missing."
+                )
+            )
+            continue
+
+        page_artifact = await callback_context.load_artifact(page.page_image_ref)
+        if (
+            page_artifact
+            and page_artifact.inline_data
+            and page_artifact.inline_data.data
+        ):
+            parts.append(page_artifact)
+        else:
+            parts.append(
+                types.Part.from_text(
+                    text=f"Page {page.page_number} artifact could not be loaded."
+                )
+            )
+
+    return build_content_with_parts(parts)
+
+
 def find_story_page(storybook_state, page_number: int) -> StoryPageState | None:
     for page in storybook_state.pages:
         if page.page_number == page_number:
@@ -508,7 +546,7 @@ async def maybe_skip_storybook_result(callback_context: CallbackContext):
     return build_empty_content()
 
 
-def render_storybook_result(callback_context: CallbackContext):
+async def render_storybook_result(callback_context: CallbackContext):
     storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
     if storybook_state.status == "failed":
         return build_text_content(format_storybook_failure(storybook_state))
@@ -521,7 +559,7 @@ def render_storybook_result(callback_context: CallbackContext):
         page_image_refs=page_image_refs,
     )
     updated_storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
-    return build_text_content(format_storybook_result(updated_storybook_state))
+    return await build_storybook_gallery_content(callback_context, updated_storybook_state)
 
 
 def build_page_illustration_callback(page_number: int):
