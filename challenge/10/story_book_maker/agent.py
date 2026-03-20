@@ -331,6 +331,17 @@ async def maybe_skip_illustration_workflow(callback_context: CallbackContext):
     return build_empty_content()
 
 
+async def maybe_skip_storybook_result(callback_context: CallbackContext):
+    storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
+    if storybook_state.status == "illustration_ready" and len(storybook_state.pages) == 5:
+        return None
+    return build_empty_content()
+
+
+def build_storybook_result_placeholder(callback_context: CallbackContext):
+    return build_empty_content()
+
+
 def build_page_illustration_callback(page_number: int):
     async def generate_single_page_illustration(callback_context: CallbackContext):
         storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
@@ -446,15 +457,25 @@ page_illustrator_agents = [
     for page_number in range(1, 6)
 ]
 
-illustrator_agent = SequentialAgent(
-    name="IllustratorAgent",
+illustration_workflow_agent = SequentialAgent(
+    name="IllustrationWorkflow",
     description=ILLUSTRATOR_AGENT_DESCRIPTION,
     before_agent_callback=maybe_skip_illustration_workflow,
     sub_agents=page_illustrator_agents,
 )
 
+illustrator_agent = illustration_workflow_agent
+
+storybook_result_agent = Agent(
+    name="StorybookResultAgent",
+    model=STORY_WRITER_MODEL,
+    description="Formats the completed storybook output after illustration finishes.",
+    instruction="Render the completed storybook result.",
+    before_agent_callback=[ensure_storybook_state, maybe_skip_storybook_result, build_storybook_result_placeholder],
+)
+
 root_agent = SequentialAgent(
     name="StoryBookWorkflow",
-    description="Runs story writing first and then passes the shared state to the illustrator stage.",
-    sub_agents=[story_writer_agent, illustrator_agent],
+    description="Runs story writing, illustration, and final result rendering in order.",
+    sub_agents=[story_writer_agent, illustration_workflow_agent, storybook_result_agent],
 )
