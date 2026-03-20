@@ -47,11 +47,18 @@ class StoryWriterResponse(BaseModel):
 
 class StoryPageState(BaseModel):
     page_number: int
+    status: Literal[
+        "pending",
+        "illustration_in_progress",
+        "illustration_ready",
+        "failed",
+    ] = "pending"
     page_text: str = ""
     visual_description: str = ""
     illustration_ref: str | None = None
     page_image_ref: str | None = None
     image_ref: str | None = None
+    error: str | None = None
 
 
 class StorybookState(BaseModel):
@@ -67,6 +74,8 @@ class StorybookState(BaseModel):
     ] = "waiting_for_theme"
     pages: list[StoryPageState] = Field(default_factory=list)
     error: str | None = None
+    failed_stage: str | None = None
+    failed_page_number: int | None = None
 
 
 def create_empty_storybook_state() -> dict:
@@ -85,15 +94,19 @@ def create_storybook_state_from_generated_story(generated_story: GeneratedStory)
         pages=[
             StoryPageState(
                 page_number=page.page_number,
+                status="pending",
                 page_text=page.page_text,
                 visual_description=page.visual_description,
                 illustration_ref=None,
                 page_image_ref=None,
                 image_ref=None,
+                error=None,
             )
             for page in generated_story.pages
         ],
         error=None,
+        failed_stage=None,
+        failed_page_number=None,
     ).model_dump()
 
 
@@ -128,15 +141,19 @@ def create_illustration_ready_storybook_state(
         pages=[
             StoryPageState(
                 page_number=page.page_number,
+                status="illustration_ready",
                 page_text=page.page_text,
                 visual_description=page.visual_description,
                 illustration_ref=None,
                 page_image_ref=image_ref,
                 image_ref=image_ref,
+                error=None,
             )
             for page, image_ref in zip(storybook_state.pages, image_refs, strict=True)
         ],
         error=None,
+        failed_stage=None,
+        failed_page_number=None,
     ).model_dump()
 
 
@@ -152,11 +169,17 @@ def create_storybook_state_with_page_image_ref(
         updated_pages.append(
             StoryPageState(
                 page_number=page.page_number,
+                status=(
+                    "illustration_ready"
+                    if page.page_number == page_number
+                    else page.status
+                ),
                 page_text=page.page_text,
                 visual_description=page.visual_description,
                 illustration_ref=page.illustration_ref,
                 page_image_ref=image_ref if page.page_number == page_number else page.page_image_ref,
                 image_ref=image_ref if page.page_number == page_number else page.image_ref,
+                error=None if page.page_number == page_number else page.error,
             )
         )
 
@@ -172,6 +195,8 @@ def create_storybook_state_with_page_image_ref(
         status=status,
         pages=updated_pages,
         error=None,
+        failed_stage=None,
+        failed_page_number=None,
     ).model_dump()
 
 
@@ -239,11 +264,21 @@ def create_storybook_state_from_page_asset_refs(
         updated_pages.append(
             StoryPageState(
                 page_number=page.page_number,
+                status=(
+                    "illustration_ready"
+                    if page_image_refs.get(page.page_number)
+                    else (
+                        "illustration_in_progress"
+                        if illustration_refs.get(page.page_number)
+                        else page.status
+                    )
+                ),
                 page_text=page.page_text,
                 visual_description=page.visual_description,
-                illustration_ref=illustration_refs.get(page.page_number),
-                page_image_ref=page_image_refs.get(page.page_number),
-                image_ref=page_image_refs.get(page.page_number),
+                illustration_ref=illustration_refs.get(page.page_number) or page.illustration_ref,
+                page_image_ref=page_image_refs.get(page.page_number) or page.page_image_ref,
+                image_ref=page_image_refs.get(page.page_number) or page.image_ref,
+                error=None if page_image_refs.get(page.page_number) else page.error,
             )
         )
 
@@ -259,6 +294,8 @@ def create_storybook_state_from_page_asset_refs(
         status=status,
         pages=updated_pages,
         error=None,
+        failed_stage=None,
+        failed_page_number=None,
     ).model_dump()
 
 
@@ -280,18 +317,85 @@ def create_storybook_state_with_status(
         status=status,
         pages=storybook_state.pages,
         error=storybook_state.error,
+        failed_stage=storybook_state.failed_stage,
+        failed_page_number=storybook_state.failed_page_number,
+    ).model_dump()
+
+
+def create_storybook_state_with_page_status(
+    raw_storybook: object | None,
+    page_number: int,
+    status: Literal[
+        "pending",
+        "illustration_in_progress",
+        "illustration_ready",
+        "failed",
+    ],
+    error: str | None = None,
+) -> dict:
+    storybook_state = load_storybook_state(raw_storybook)
+    updated_pages = []
+    for page in storybook_state.pages:
+        updated_pages.append(
+            StoryPageState(
+                page_number=page.page_number,
+                status=status if page.page_number == page_number else page.status,
+                page_text=page.page_text,
+                visual_description=page.visual_description,
+                illustration_ref=page.illustration_ref,
+                page_image_ref=page.page_image_ref,
+                image_ref=page.image_ref,
+                error=error if page.page_number == page_number else page.error,
+            )
+        )
+
+    return StorybookState(
+        title=storybook_state.title,
+        theme=storybook_state.theme,
+        status=storybook_state.status,
+        pages=updated_pages,
+        error=storybook_state.error,
+        failed_stage=storybook_state.failed_stage,
+        failed_page_number=storybook_state.failed_page_number,
     ).model_dump()
 
 
 def create_failed_storybook_state(
     raw_storybook: object | None,
     error: str,
+    *,
+    stage: str | None = None,
+    page_number: int | None = None,
 ) -> dict:
     storybook_state = load_storybook_state(raw_storybook)
+    updated_pages = []
+    for page in storybook_state.pages:
+        updated_pages.append(
+            StoryPageState(
+                page_number=page.page_number,
+                status=(
+                    "failed"
+                    if page_number is not None and page.page_number == page_number
+                    else page.status
+                ),
+                page_text=page.page_text,
+                visual_description=page.visual_description,
+                illustration_ref=page.illustration_ref,
+                page_image_ref=page.page_image_ref,
+                image_ref=page.image_ref,
+                error=(
+                    error
+                    if page_number is not None and page.page_number == page_number
+                    else page.error
+                ),
+            )
+        )
     return StorybookState(
         title=storybook_state.title,
         theme=storybook_state.theme,
         status="failed",
-        pages=storybook_state.pages,
+        pages=updated_pages,
         error=error,
+        failed_stage=stage,
+        failed_page_number=page_number,
     ).model_dump()

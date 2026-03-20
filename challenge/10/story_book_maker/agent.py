@@ -31,6 +31,7 @@ from .state import (
     create_empty_storybook_state,
     create_generated_story_from_writer_response,
     create_storybook_state_from_page_asset_refs,
+    create_storybook_state_with_page_status,
     create_storybook_state_from_page_image_refs,
     create_storybook_state_with_status,
     create_storybook_state_from_generated_story,
@@ -176,6 +177,34 @@ def extract_response_text(response) -> str:
     return ""
 
 
+def summarize_image_generation_response(response) -> str:
+    details: list[str] = []
+    response_text = extract_response_text(response)
+    if response_text:
+        details.append(f"text={response_text[:160]!r}")
+
+    for index, candidate in enumerate(response.candidates or [], start=1):
+        finish_reason = getattr(candidate, "finish_reason", None)
+        if finish_reason is not None:
+            details.append(f"candidate_{index}_finish_reason={finish_reason}")
+
+        if not candidate.content or not candidate.content.parts:
+            details.append(f"candidate_{index}_parts=0")
+            continue
+
+        part_summaries = []
+        for part in candidate.content.parts:
+            if getattr(part, "inline_data", None) and getattr(part.inline_data, "data", None):
+                part_summaries.append(f"inline_data:{part.inline_data.mime_type or 'unknown'}")
+            elif getattr(part, "text", None):
+                part_summaries.append(f"text:{part.text[:80]!r}")
+            else:
+                part_summaries.append("empty_part")
+        details.append(f"candidate_{index}_parts=[{', '.join(part_summaries)}]")
+
+    return "; ".join(details) if details else "no candidates or content returned"
+
+
 async def generate_storybook_story(callback_context: CallbackContext):
     user_text = extract_user_text(callback_context)
     if not user_text:
@@ -200,6 +229,7 @@ async def generate_storybook_story(callback_context: CallbackContext):
         callback_context.state[STORYBOOK_STATE_KEY] = create_failed_storybook_state(
             callback_context.state.get(STORYBOOK_STATE_KEY),
             f"story_generation_failed: {error}",
+            stage="story_writing",
         )
         return build_text_content("스토리 생성에 실패했습니다. 다시 시도해 주세요.")
 
@@ -283,7 +313,11 @@ def extract_generated_image_bytes(response) -> tuple[bytes, str]:
             if inline_data and inline_data.data:
                 return inline_data.data, inline_data.mime_type or "image/jpeg"
 
-    raise ValueError("The image model response did not contain generated image bytes.")
+    response_summary = summarize_image_generation_response(response)
+    raise ValueError(
+        "The image model response did not contain generated image bytes. "
+        f"Response summary: {response_summary}"
+    )
 
 
 def generate_page_illustration(
@@ -375,6 +409,40 @@ def format_storybook_result(storybook_state) -> str:
     return "\n\n".join(sections)
 
 
+def format_storybook_failure(storybook_state) -> str:
+    sections = [
+        "Storybook generation failed.",
+        f"Title: {format_display_text(storybook_state.title)}",
+        f"Theme: {format_display_text(storybook_state.theme)}",
+        f"Status: {storybook_state.status}",
+    ]
+    if storybook_state.failed_stage:
+        sections.append(f"Failed Stage: {storybook_state.failed_stage}")
+    if storybook_state.failed_page_number is not None:
+        sections.append(f"Failed Page: {storybook_state.failed_page_number}")
+    if storybook_state.error:
+        sections.append(f"Error: {format_display_text(storybook_state.error)}")
+
+    page_error_sections = []
+    for page in storybook_state.pages:
+        if page.error:
+            page_error_sections.append(
+                "\n".join(
+                    [
+                        f"Page {page.page_number}:",
+                        f"Page Status: {page.status}",
+                        f"Page Error: {format_display_text(page.error)}",
+                    ]
+                )
+            )
+
+    if page_error_sections:
+        sections.append("")
+        sections.extend(page_error_sections)
+
+    return "\n".join(sections)
+
+
 def find_story_page(storybook_state, page_number: int) -> StoryPageState | None:
     for page in storybook_state.pages:
         if page.page_number == page_number:
@@ -395,6 +463,12 @@ def format_page_result(page: StoryPageState) -> str:
 
 def build_page_illustration_started_callback(page_number: int):
     def announce_page_illustration_started(callback_context: CallbackContext):
+        callback_context.state[STORYBOOK_STATE_KEY] = create_storybook_state_with_page_status(
+            callback_context.state.get(STORYBOOK_STATE_KEY),
+            page_number=page_number,
+            status="illustration_in_progress",
+            error=None,
+        )
         return build_text_content(summarize_page_illustration_started(page_number))
 
     return announce_page_illustration_started
@@ -425,6 +499,8 @@ async def maybe_skip_illustration_workflow(callback_context: CallbackContext):
 
 async def maybe_skip_storybook_result(callback_context: CallbackContext):
     storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
+    if storybook_state.status == "failed" and storybook_state.error:
+        return None
     illustration_refs = extract_page_illustration_refs(callback_context.state, total_pages=5)
     page_image_refs = extract_page_image_refs(callback_context.state, total_pages=5)
     if len(illustration_refs) == 5 and len(page_image_refs) == 5 and len(storybook_state.pages) == 5:
@@ -433,6 +509,10 @@ async def maybe_skip_storybook_result(callback_context: CallbackContext):
 
 
 def render_storybook_result(callback_context: CallbackContext):
+    storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
+    if storybook_state.status == "failed":
+        return build_text_content(format_storybook_failure(storybook_state))
+
     illustration_refs = extract_page_illustration_refs(callback_context.state, total_pages=5)
     page_image_refs = extract_page_image_refs(callback_context.state, total_pages=5)
     callback_context.state[STORYBOOK_STATE_KEY] = create_storybook_state_from_page_asset_refs(
@@ -440,8 +520,8 @@ def render_storybook_result(callback_context: CallbackContext):
         illustration_refs=illustration_refs,
         page_image_refs=page_image_refs,
     )
-    storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
-    return build_text_content(format_storybook_result(storybook_state))
+    updated_storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
+    return build_text_content(format_storybook_result(updated_storybook_state))
 
 
 def build_page_illustration_callback(page_number: int):
@@ -497,6 +577,12 @@ def build_page_illustration_callback(page_number: int):
                     image_bytes=page_image_bytes,
                     mime_type=page_image_mime_type,
                 )
+            callback_context.state[STORYBOOK_STATE_KEY] = create_storybook_state_with_page_status(
+                callback_context.state.get(STORYBOOK_STATE_KEY),
+                page_number=page_number,
+                status="illustration_ready",
+                error=None,
+            )
             return build_text_content(summarize_page_illustration_completed(page_number))
 
         try:
@@ -599,6 +685,8 @@ def build_page_illustration_callback(page_number: int):
             callback_context.state[STORYBOOK_STATE_KEY] = create_failed_storybook_state(
                 callback_context.state.get(STORYBOOK_STATE_KEY),
                 f"illustration_generation_failed: {error}",
+                stage="illustration",
+                page_number=page_number,
             )
             return build_text_content(
                 f"이미지 {page_number}/5 생성에 실패했습니다. 다시 시도해 주세요."
@@ -606,6 +694,12 @@ def build_page_illustration_callback(page_number: int):
 
         callback_context.state[build_page_illustration_ref_state_key(page_number)] = illustration_ref
         callback_context.state[build_page_image_ref_state_key(page_number)] = page_image_ref
+        callback_context.state[STORYBOOK_STATE_KEY] = create_storybook_state_with_page_status(
+            callback_context.state.get(STORYBOOK_STATE_KEY),
+            page_number=page_number,
+            status="illustration_ready",
+            error=None,
+        )
         return build_text_content(summarize_page_illustration_completed(page_number))
 
     return generate_single_page_illustration
