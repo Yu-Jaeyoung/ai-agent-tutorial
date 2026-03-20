@@ -28,6 +28,7 @@ from .state import (
     create_failed_storybook_state,
     create_empty_storybook_state,
     create_generated_story_from_writer_response,
+    create_storybook_state_from_page_image_refs,
     create_storybook_state_with_status,
     create_storybook_state_from_generated_story,
     extract_page_image_refs,
@@ -300,9 +301,13 @@ def generate_page_illustration(
 
 
 def format_storybook_result(storybook_state) -> str:
-    sections = []
+    sections = [f"Title: {format_display_text(storybook_state.title)}"]
     for page in storybook_state.pages:
-        image_line = "[생성된 이미지가 Artifact로 저장됨]"
+        image_line = (
+            f"[Artifact 저장됨: {page.image_ref}]"
+            if page.image_ref
+            else "[Artifact 저장되지 않음]"
+        )
         sections.append(
             "\n".join(
                 [
@@ -361,8 +366,14 @@ async def maybe_skip_storybook_result(callback_context: CallbackContext):
     return build_empty_content()
 
 
-def build_storybook_result_placeholder(callback_context: CallbackContext):
-    return build_empty_content()
+def render_storybook_result(callback_context: CallbackContext):
+    image_refs = extract_page_image_refs(callback_context.state, total_pages=5)
+    callback_context.state[STORYBOOK_STATE_KEY] = create_storybook_state_from_page_image_refs(
+        callback_context.state.get(STORYBOOK_STATE_KEY),
+        image_refs=image_refs,
+    )
+    storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
+    return build_text_content(format_storybook_result(storybook_state))
 
 
 def build_page_illustration_callback(page_number: int):
@@ -503,7 +514,7 @@ storybook_result_agent = Agent(
     model=STORY_WRITER_MODEL,
     description="Formats the completed storybook output after illustration finishes.",
     instruction="Render the completed storybook result.",
-    before_agent_callback=[ensure_storybook_state, maybe_skip_storybook_result, build_storybook_result_placeholder],
+    before_agent_callback=[ensure_storybook_state, maybe_skip_storybook_result, render_storybook_result],
 )
 
 root_agent = SequentialAgent(
