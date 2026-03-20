@@ -139,7 +139,7 @@ def build_storybook_overview(storybook_state) -> str:
 
 def build_theme_seed(theme: str) -> int:
     digest = hashlib.sha256(theme.encode("utf-8")).hexdigest()
-    return int(digest[:8], 16)
+    return int(digest[:8], 16) & 0x7FFFFFFF
 
 
 def format_display_text(text: str) -> str:
