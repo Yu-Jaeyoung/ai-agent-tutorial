@@ -1,6 +1,9 @@
 .env
 .idea
+.adk
 __pycache__
 challenge/8/restaurant-bot-memory.db
 challenge/9/story_book_maker/.adk/
 challenge/9/story_book_maker/generated/
+challenge/10/story_book_maker/.adk/
+challenge/10/story_book_maker/generated/
