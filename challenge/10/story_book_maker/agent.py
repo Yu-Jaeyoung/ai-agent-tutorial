@@ -59,6 +59,14 @@ def summarize_story_ready(theme: str) -> str:
     return f"'{theme}' 테마로 5페이지 동화를 완성했습니다. 이제 삽화를 생성합니다."
 
 
+def summarize_page_illustration_started(page_number: int) -> str:
+    return f"이미지 {page_number}/5 생성 중..."
+
+
+def summarize_page_illustration_completed(page_number: int) -> str:
+    return f"이미지 {page_number}/5 생성 완료"
+
+
 def slugify_theme(theme: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", theme.lower()).strip("-")
     return slug or "storybook"
@@ -326,6 +334,13 @@ def format_page_result(page: StoryPageState) -> str:
     )
 
 
+def build_page_illustration_started_callback(page_number: int):
+    def announce_page_illustration_started(callback_context: CallbackContext):
+        return build_text_content(summarize_page_illustration_started(page_number))
+
+    return announce_page_illustration_started
+
+
 async def maybe_skip_illustration_workflow(callback_context: CallbackContext):
     storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
     if storybook_state.status in {"story_ready", "illustration_in_progress", "illustration_ready"} and len(storybook_state.pages) == 5:
@@ -375,8 +390,7 @@ def build_page_illustration_callback(page_number: int):
                     image_bytes=saved_artifact.inline_data.data,
                     mime_type=saved_artifact.inline_data.mime_type or "image/jpeg",
                 )
-            cached_page = page.model_copy(update={"image_ref": existing_image_ref})
-            return build_text_content(format_page_result(cached_page))
+            return build_text_content(summarize_page_illustration_completed(page_number))
 
         try:
             client = Client(api_key=GOOGLE_API_KEY)
@@ -414,12 +428,11 @@ def build_page_illustration_callback(page_number: int):
                 f"illustration_generation_failed: {error}",
             )
             return build_text_content(
-                f"Page {page_number} illustration generation failed. Please try again."
+                f"이미지 {page_number}/5 생성에 실패했습니다. 다시 시도해 주세요."
             )
 
         callback_context.state[build_page_image_ref_state_key(page_number)] = artifact_filename
-        updated_page = page.model_copy(update={"image_ref": artifact_filename})
-        return build_text_content(format_page_result(updated_page))
+        return build_text_content(summarize_page_illustration_completed(page_number))
 
     return generate_single_page_illustration
 
@@ -452,13 +465,26 @@ story_writer_agent = SequentialAgent(
     sub_agents=[story_writer_progress_agent, story_writer_worker_agent],
 )
 
-page_illustrator_agents = [
-    Agent(
-        name=f"IllustratorPage{page_number}Agent",
-        model=ILLUSTRATOR_MODEL,
-        description=f"Generates and reports the illustration for page {page_number}.",
-        instruction=ILLUSTRATOR_AGENT_INSTRUCTION,
-        before_agent_callback=build_page_illustration_callback(page_number),
+page_illustration_workflows = [
+    SequentialAgent(
+        name=f"IllustratorPage{page_number}Workflow",
+        description=f"Announces, generates, and completes the illustration for page {page_number}.",
+        sub_agents=[
+            Agent(
+                name=f"IllustratorPage{page_number}StartAgent",
+                model=ILLUSTRATOR_MODEL,
+                description=f"Announces the start of page {page_number} illustration generation.",
+                instruction=f"Announce the start of page {page_number} illustration generation.",
+                before_agent_callback=build_page_illustration_started_callback(page_number),
+            ),
+            Agent(
+                name=f"IllustratorPage{page_number}Agent",
+                model=ILLUSTRATOR_MODEL,
+                description=f"Generates and reports the illustration for page {page_number}.",
+                instruction=ILLUSTRATOR_AGENT_INSTRUCTION,
+                before_agent_callback=build_page_illustration_callback(page_number),
+            ),
+        ],
     )
     for page_number in range(1, 6)
 ]
@@ -467,7 +493,7 @@ illustration_workflow_agent = ParallelAgent(
     name="IllustrationWorkflow",
     description="Runs the five page illustration agents in parallel.",
     before_agent_callback=maybe_skip_illustration_workflow,
-    sub_agents=page_illustrator_agents,
+    sub_agents=page_illustration_workflows,
 )
 
 illustrator_agent = illustration_workflow_agent
