@@ -68,6 +68,11 @@ def summarize_page_illustration_completed(page_number: int) -> str:
     return f"이미지 {page_number}/5 생성 완료"
 
 
+def clear_page_image_refs(callback_context: CallbackContext, total_pages: int = 5):
+    for page_number in range(1, total_pages + 1):
+        callback_context.state[build_page_image_ref_state_key(page_number)] = ""
+
+
 def slugify_theme(theme: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", theme.lower()).strip("-")
     return slug or "storybook"
@@ -160,6 +165,7 @@ def extract_response_text(response) -> str:
 async def generate_storybook_story(callback_context: CallbackContext):
     user_text = extract_user_text(callback_context)
     if not user_text:
+        clear_page_image_refs(callback_context)
         callback_context.state[STORYBOOK_STATE_KEY] = create_empty_storybook_state()
         return build_text_content("이야기 테마를 한 가지 입력해 주세요.")
 
@@ -184,10 +190,12 @@ async def generate_storybook_story(callback_context: CallbackContext):
         return build_text_content("스토리 생성에 실패했습니다. 다시 시도해 주세요.")
 
     if writer_response.status == "needs_theme":
+        clear_page_image_refs(callback_context)
         callback_context.state[STORYBOOK_STATE_KEY] = create_empty_storybook_state()
         return build_text_content(writer_response.message)
 
     generated_story = create_generated_story_from_writer_response(writer_response)
+    clear_page_image_refs(callback_context)
     callback_context.state[STORYBOOK_STATE_KEY] = (
         create_storybook_state_from_generated_story(generated_story)
     )
