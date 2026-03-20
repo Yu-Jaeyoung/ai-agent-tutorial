@@ -7,6 +7,7 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents import Agent, ParallelAgent, SequentialAgent
 from google.genai import Client, types
 
+from .page_compositor import compose_storybook_page
 from .prompt import (
     ILLUSTRATOR_AGENT_DESCRIPTION,
     ILLUSTRATOR_AGENT_INSTRUCTION,
@@ -24,13 +25,16 @@ from .state import (
     STORYBOOK_STATE_KEY,
     StoryWriterResponse,
     StoryPageState,
+    build_page_illustration_ref_state_key,
     build_page_image_ref_state_key,
     create_failed_storybook_state,
     create_empty_storybook_state,
     create_generated_story_from_writer_response,
+    create_storybook_state_from_page_asset_refs,
     create_storybook_state_from_page_image_refs,
     create_storybook_state_with_status,
     create_storybook_state_from_generated_story,
+    extract_page_illustration_refs,
     extract_page_image_refs,
     load_storybook_state,
 )
@@ -68,8 +72,9 @@ def summarize_page_illustration_completed(page_number: int) -> str:
     return f"이미지 {page_number}/5 생성 완료"
 
 
-def clear_page_image_refs(callback_context: CallbackContext, total_pages: int = 5):
+def clear_page_asset_refs(callback_context: CallbackContext, total_pages: int = 5):
     for page_number in range(1, total_pages + 1):
+        callback_context.state[build_page_illustration_ref_state_key(page_number)] = ""
         callback_context.state[build_page_image_ref_state_key(page_number)] = ""
 
 
@@ -84,17 +89,23 @@ def build_local_output_dir(theme: str) -> Path:
     return output_dir
 
 
-def build_local_image_path(theme: str, page_number: int, mime_type: str) -> Path:
-    return build_local_output_dir(theme) / f"page_{page_number}{mime_type_to_extension(mime_type)}"
+def build_local_asset_path(
+    theme: str,
+    page_number: int,
+    asset_name: str,
+    mime_type: str,
+) -> Path:
+    return build_local_output_dir(theme) / f"{asset_name}_page_{page_number}{mime_type_to_extension(mime_type)}"
 
 
 def save_local_image_bytes(
     theme: str,
     page_number: int,
+    asset_name: str,
     image_bytes: bytes,
     mime_type: str,
 ) -> str:
-    image_path = build_local_image_path(theme, page_number, mime_type)
+    image_path = build_local_asset_path(theme, page_number, asset_name, mime_type)
     image_path.write_bytes(image_bytes)
     return str(image_path.resolve())
 
@@ -165,7 +176,7 @@ def extract_response_text(response) -> str:
 async def generate_storybook_story(callback_context: CallbackContext):
     user_text = extract_user_text(callback_context)
     if not user_text:
-        clear_page_image_refs(callback_context)
+        clear_page_asset_refs(callback_context)
         callback_context.state[STORYBOOK_STATE_KEY] = create_empty_storybook_state()
         return build_text_content("이야기 테마를 한 가지 입력해 주세요.")
 
@@ -190,12 +201,12 @@ async def generate_storybook_story(callback_context: CallbackContext):
         return build_text_content("스토리 생성에 실패했습니다. 다시 시도해 주세요.")
 
     if writer_response.status == "needs_theme":
-        clear_page_image_refs(callback_context)
+        clear_page_asset_refs(callback_context)
         callback_context.state[STORYBOOK_STATE_KEY] = create_empty_storybook_state()
         return build_text_content(writer_response.message)
 
     generated_story = create_generated_story_from_writer_response(writer_response)
-    clear_page_image_refs(callback_context)
+    clear_page_asset_refs(callback_context)
     callback_context.state[STORYBOOK_STATE_KEY] = (
         create_storybook_state_from_generated_story(generated_story)
     )
@@ -229,16 +240,19 @@ Requirements:
 """.strip()
 
 
-def build_page_artifact_basename(theme: str, page_number: int) -> str:
-    return f"{slugify_theme(theme)}-page-{page_number}-image"
+def build_page_illustration_artifact_basename(theme: str, page_number: int) -> str:
+    return f"{slugify_theme(theme)}-illustration-page-{page_number}"
 
 
-def find_existing_page_artifact(
+def build_page_storybook_artifact_basename(theme: str, page_number: int) -> str:
+    return f"{slugify_theme(theme)}-storybook-page-{page_number}"
+
+
+def find_existing_artifact(
     existing_artifacts: list[str],
-    theme: str,
-    page_number: int,
+    artifact_basename: str,
 ) -> str | None:
-    artifact_prefix = f"{build_page_artifact_basename(theme, page_number)}."
+    artifact_prefix = f"{artifact_basename}."
     for artifact_name in sorted(existing_artifacts):
         if artifact_name.startswith(artifact_prefix):
             return artifact_name
@@ -275,10 +289,12 @@ def generate_page_illustration(
     page: StoryPageState,
     existing_artifacts: list[str],
 ) -> tuple[str, types.Part | None, tuple[bytes, str] | None]:
-    existing_artifact = find_existing_page_artifact(
+    existing_artifact = find_existing_artifact(
         existing_artifacts=existing_artifacts,
-        theme=storybook_state.theme,
-        page_number=page.page_number,
+        artifact_basename=build_page_illustration_artifact_basename(
+            storybook_state.theme,
+            page.page_number,
+        ),
     )
     if existing_artifact:
         return existing_artifact, None, None
@@ -296,7 +312,7 @@ def generate_page_illustration(
     )
     image_bytes, mime_type = extract_generated_image_bytes(response)
     artifact_filename = (
-        f"{build_page_artifact_basename(storybook_state.theme, page.page_number)}"
+        f"{build_page_illustration_artifact_basename(storybook_state.theme, page.page_number)}"
         f"{mime_type_to_extension(mime_type)}"
     )
     artifact = types.Part(
@@ -308,24 +324,51 @@ def generate_page_illustration(
     return artifact_filename, artifact, (image_bytes, mime_type)
 
 
+def build_storybook_page_asset(
+    storybook_state,
+    page: StoryPageState,
+    illustration_bytes: bytes,
+) -> tuple[str, types.Part, tuple[bytes, str]]:
+    page_image_bytes, mime_type = compose_storybook_page(
+        illustration_bytes=illustration_bytes,
+        page_text=page.page_text,
+    )
+    artifact_filename = (
+        f"{build_page_storybook_artifact_basename(storybook_state.theme, page.page_number)}"
+        f"{mime_type_to_extension(mime_type)}"
+    )
+    artifact = types.Part(
+        inline_data=types.Blob(
+            data=page_image_bytes,
+            mime_type=mime_type,
+        )
+    )
+    return artifact_filename, artifact, (page_image_bytes, mime_type)
+
+
 def format_storybook_result(storybook_state) -> str:
     sections = [f"Title: {format_display_text(storybook_state.title)}"]
     for page in storybook_state.pages:
-        image_line = (
-            f"[Artifact 저장됨: {page.image_ref}]"
-            if page.image_ref
-            else "[Artifact 저장되지 않음]"
-        )
         sections.append(
             "\n".join(
                 [
                     f"Page {page.page_number}:",
-                    f"Text: {format_display_text(page.page_text)}",
-                    f"Visual: {format_display_text(page.visual_description)}",
-                    f"Image: {image_line}",
+                    f"Story Text: {format_display_text(page.page_text)}",
+                    "Illustration Artifact: "
+                    + (
+                        f"[Artifact 저장됨: {page.illustration_ref}]"
+                        if page.illustration_ref
+                        else "[Artifact 저장되지 않음]"
+                    ),
+                    "Storybook Page Artifact: "
+                    + (
+                        f"[Artifact 저장됨: {page.page_image_ref}]"
+                        if page.page_image_ref
+                        else "[Artifact 저장되지 않음]"
+                    ),
                 ]
             )
-    )
+        )
     return "\n\n".join(sections)
 
 
@@ -354,6 +397,17 @@ def build_page_illustration_started_callback(page_number: int):
     return announce_page_illustration_started
 
 
+async def load_artifact_bytes(callback_context: CallbackContext, artifact_name: str) -> tuple[bytes, str] | None:
+    saved_artifact = await callback_context.load_artifact(artifact_name)
+    if (
+        saved_artifact
+        and saved_artifact.inline_data
+        and saved_artifact.inline_data.data
+    ):
+        return saved_artifact.inline_data.data, saved_artifact.inline_data.mime_type or "image/jpeg"
+    return None
+
+
 async def maybe_skip_illustration_workflow(callback_context: CallbackContext):
     storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
     if storybook_state.status in {"story_ready", "illustration_in_progress", "illustration_ready"} and len(storybook_state.pages) == 5:
@@ -368,17 +422,20 @@ async def maybe_skip_illustration_workflow(callback_context: CallbackContext):
 
 async def maybe_skip_storybook_result(callback_context: CallbackContext):
     storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
-    image_refs = extract_page_image_refs(callback_context.state, total_pages=5)
-    if len(image_refs) == 5 and len(storybook_state.pages) == 5:
+    illustration_refs = extract_page_illustration_refs(callback_context.state, total_pages=5)
+    page_image_refs = extract_page_image_refs(callback_context.state, total_pages=5)
+    if len(illustration_refs) == 5 and len(page_image_refs) == 5 and len(storybook_state.pages) == 5:
         return None
     return build_empty_content()
 
 
 def render_storybook_result(callback_context: CallbackContext):
-    image_refs = extract_page_image_refs(callback_context.state, total_pages=5)
-    callback_context.state[STORYBOOK_STATE_KEY] = create_storybook_state_from_page_image_refs(
+    illustration_refs = extract_page_illustration_refs(callback_context.state, total_pages=5)
+    page_image_refs = extract_page_image_refs(callback_context.state, total_pages=5)
+    callback_context.state[STORYBOOK_STATE_KEY] = create_storybook_state_from_page_asset_refs(
         callback_context.state.get(STORYBOOK_STATE_KEY),
-        image_refs=image_refs,
+        illustration_refs=illustration_refs,
+        page_image_refs=page_image_refs,
     )
     storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
     return build_text_content(format_storybook_result(storybook_state))
@@ -399,48 +456,142 @@ def build_page_illustration_callback(page_number: int):
         if page is None:
             return build_empty_content()
 
-        existing_image_ref = callback_context.state.get(build_page_image_ref_state_key(page_number))
-        if isinstance(existing_image_ref, str) and existing_image_ref.strip():
-            saved_artifact = await callback_context.load_artifact(existing_image_ref)
-            if saved_artifact and saved_artifact.inline_data and saved_artifact.inline_data.data:
+        existing_illustration_ref = callback_context.state.get(
+            build_page_illustration_ref_state_key(page_number)
+        )
+        existing_page_image_ref = callback_context.state.get(
+            build_page_image_ref_state_key(page_number)
+        )
+        if (
+            isinstance(existing_illustration_ref, str)
+            and existing_illustration_ref.strip()
+            and isinstance(existing_page_image_ref, str)
+            and existing_page_image_ref.strip()
+        ):
+            illustration_data = await load_artifact_bytes(
+                callback_context,
+                existing_illustration_ref,
+            )
+            if illustration_data:
+                illustration_bytes, illustration_mime_type = illustration_data
                 save_local_image_bytes(
                     theme=storybook_state.theme,
                     page_number=page.page_number,
-                    image_bytes=saved_artifact.inline_data.data,
-                    mime_type=saved_artifact.inline_data.mime_type or "image/jpeg",
+                    asset_name="illustration",
+                    image_bytes=illustration_bytes,
+                    mime_type=illustration_mime_type,
+                )
+            page_image_data = await load_artifact_bytes(
+                callback_context,
+                existing_page_image_ref,
+            )
+            if page_image_data:
+                page_image_bytes, page_image_mime_type = page_image_data
+                save_local_image_bytes(
+                    theme=storybook_state.theme,
+                    page_number=page.page_number,
+                    asset_name="storybook",
+                    image_bytes=page_image_bytes,
+                    mime_type=page_image_mime_type,
                 )
             return build_text_content(summarize_page_illustration_completed(page_number))
 
         try:
             client = Client(api_key=GOOGLE_API_KEY)
             existing_artifacts = await callback_context.list_artifacts()
-            artifact_filename, artifact, local_image_data = generate_page_illustration(
-                client=client,
-                storybook_state=storybook_state,
-                page=page,
-                existing_artifacts=existing_artifacts,
+            illustration_ref = (
+                existing_illustration_ref
+                if isinstance(existing_illustration_ref, str) and existing_illustration_ref.strip()
+                else find_existing_artifact(
+                    existing_artifacts,
+                    build_page_illustration_artifact_basename(
+                        storybook_state.theme,
+                        page.page_number,
+                    ),
+                )
             )
-            if artifact is not None:
-                await callback_context.save_artifact(
-                    filename=artifact_filename,
-                    artifact=artifact,
-                )
-                image_bytes, mime_type = local_image_data
-                save_local_image_bytes(
-                    theme=storybook_state.theme,
-                    page_number=page.page_number,
-                    image_bytes=image_bytes,
-                    mime_type=mime_type,
-                )
-            else:
-                saved_artifact = await callback_context.load_artifact(artifact_filename)
-                if saved_artifact and saved_artifact.inline_data and saved_artifact.inline_data.data:
+            illustration_data = None
+            if illustration_ref:
+                illustration_data = await load_artifact_bytes(callback_context, illustration_ref)
+                if illustration_data:
+                    illustration_bytes, illustration_mime_type = illustration_data
                     save_local_image_bytes(
                         theme=storybook_state.theme,
                         page_number=page.page_number,
-                        image_bytes=saved_artifact.inline_data.data,
-                        mime_type=saved_artifact.inline_data.mime_type or "image/jpeg",
+                        asset_name="illustration",
+                        image_bytes=illustration_bytes,
+                        mime_type=illustration_mime_type,
                     )
+
+            if not illustration_data:
+                illustration_ref, illustration_artifact, illustration_data = generate_page_illustration(
+                    client=client,
+                    storybook_state=storybook_state,
+                    page=page,
+                    existing_artifacts=existing_artifacts,
+                )
+                if illustration_artifact is not None:
+                    await callback_context.save_artifact(
+                        filename=illustration_ref,
+                        artifact=illustration_artifact,
+                    )
+                else:
+                    illustration_data = await load_artifact_bytes(callback_context, illustration_ref)
+                if not illustration_data:
+                    raise ValueError("The illustration artifact could not be loaded.")
+                illustration_bytes, illustration_mime_type = illustration_data
+                save_local_image_bytes(
+                    theme=storybook_state.theme,
+                    page_number=page.page_number,
+                    asset_name="illustration",
+                    image_bytes=illustration_bytes,
+                    mime_type=illustration_mime_type,
+                )
+
+            page_image_ref = (
+                existing_page_image_ref
+                if isinstance(existing_page_image_ref, str) and existing_page_image_ref.strip()
+                else find_existing_artifact(
+                    existing_artifacts,
+                    build_page_storybook_artifact_basename(
+                        storybook_state.theme,
+                        page.page_number,
+                    ),
+                )
+            )
+            if page_image_ref:
+                page_image_data = await load_artifact_bytes(callback_context, page_image_ref)
+                if page_image_data:
+                    page_image_bytes, page_image_mime_type = page_image_data
+                    save_local_image_bytes(
+                        theme=storybook_state.theme,
+                        page_number=page.page_number,
+                        asset_name="storybook",
+                        image_bytes=page_image_bytes,
+                        mime_type=page_image_mime_type,
+                    )
+                else:
+                    page_image_ref = None
+
+            if not page_image_ref:
+                illustration_bytes, _ = illustration_data
+                page_image_ref, page_image_artifact, page_image_data = build_storybook_page_asset(
+                    storybook_state=storybook_state,
+                    page=page,
+                    illustration_bytes=illustration_bytes,
+                )
+                await callback_context.save_artifact(
+                    filename=page_image_ref,
+                    artifact=page_image_artifact,
+                )
+                page_image_bytes, page_image_mime_type = page_image_data
+                save_local_image_bytes(
+                    theme=storybook_state.theme,
+                    page_number=page.page_number,
+                    asset_name="storybook",
+                    image_bytes=page_image_bytes,
+                    mime_type=page_image_mime_type,
+                )
         except Exception as error:
             callback_context.state[STORYBOOK_STATE_KEY] = create_failed_storybook_state(
                 callback_context.state.get(STORYBOOK_STATE_KEY),
@@ -450,7 +601,8 @@ def build_page_illustration_callback(page_number: int):
                 f"이미지 {page_number}/5 생성에 실패했습니다. 다시 시도해 주세요."
             )
 
-        callback_context.state[build_page_image_ref_state_key(page_number)] = artifact_filename
+        callback_context.state[build_page_illustration_ref_state_key(page_number)] = illustration_ref
+        callback_context.state[build_page_image_ref_state_key(page_number)] = page_image_ref
         return build_text_content(summarize_page_illustration_completed(page_number))
 
     return generate_single_page_illustration
