@@ -23,15 +23,19 @@ Open the ADK Web UI and select `story_book_maker`.
 - The illustration stage runs as a parallel workflow with 5 page branches.
 - The UI shows page illustration progress events such as `이미지 1/5 생성 중...` and `이미지 1/5 생성 완료`.
 - Page progress messages may appear in completion order rather than page-number order.
-- Each generated image is saved as an Artifact.
-- Each generated image is also mirrored under `challenge/10/story_book_maker/generated/<theme-slug>/`.
+- Each page stores both a raw illustration Artifact and a final storybook page Artifact.
+- Each generated page is also mirrored under `challenge/10/story_book_maker/generated/<theme-slug>/`.
+- The local generated directory contains both:
+  - `illustration_page_1.*`
+  - `storybook_page_1.*`
 - The final response renders the complete storybook with:
   - `Title`
   - `Page 1` to `Page 5`
-  - `Text`
-  - `Visual`
-  - `Image`
+  - `Story Text`
+  - `Illustration Artifact`
+  - `Storybook Page Artifact`
 - The final `storybook.status` is `illustration_ready`.
+- The final page Artifact should already contain the rendered Korean story text inside the image.
 
 ## Failure Checks
 

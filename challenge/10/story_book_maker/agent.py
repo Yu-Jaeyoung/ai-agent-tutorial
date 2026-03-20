@@ -80,7 +80,10 @@ def clear_page_asset_refs(callback_context: CallbackContext, total_pages: int = 
 
 def slugify_theme(theme: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", theme.lower()).strip("-")
-    return slug or "storybook"
+    if slug:
+        return slug
+    digest = hashlib.sha256(theme.encode("utf-8")).hexdigest()
+    return f"storybook-{digest[:8]}"
 
 
 def build_local_output_dir(theme: str) -> Path:
