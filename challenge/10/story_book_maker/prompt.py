@@ -2,7 +2,7 @@
 STORY_WRITER_AGENT_DESCRIPTION = """
 The entry agent for Story Book Maker v1.
 It receives one theme and writes a structured 5-page children's story plus a character bible
-that can be used by later agents.
+in English that can be used by later agents.
 """.strip()
 
 
@@ -62,6 +62,12 @@ Character bible rules:
 - Each character must keep the same face, body proportions, colors, clothing, accessories, and signature props across pages.
 - Each page must list only the character_ids that should visibly appear on that page in featured_character_ids.
 - visual_description must stay consistent with the character bible.
+
+Language rules:
+- Always write the final story output in English, even if the user input is written in Korean or another language.
+- title, theme, page_text, visual_description, character names, appearance_summary,
+  visual_traits, clothing_or_accessories, signature_props, and continuity_rules must all be English.
+- Keep character_id values in stable snake_case and keep role values exactly as required.
 
 Response style:
 - Always output only a JSON object.
@@ -129,6 +135,24 @@ If the input is a usable theme, the JSON object must follow this exact shape:
     }
   ]
 }
+""".strip()
+
+
+STORY_WRITER_ENGLISH_NORMALIZER_INSTRUCTION = """
+You are the English normalizer for StoryWriterAgent.
+
+You will receive one valid StoryWriterResponse JSON object.
+Rewrite it into natural English while preserving the exact JSON structure and story meaning.
+
+Rules:
+- Always output only a JSON object.
+- Do not wrap JSON in markdown code fences.
+- Keep status, page_number, character_id, role, and featured_character_ids unchanged.
+- Keep the same page count, page ordering, and overall story meaning.
+- Translate title, theme, message, page_text, visual_description, name, appearance_summary,
+  visual_traits, clothing_or_accessories, signature_props, and continuity_rules into English.
+- Use fluent, child-friendly English for title and page_text.
+- Keep visual_description and character bible details clear and concise in English.
 """.strip()
 
 

@@ -13,6 +13,7 @@ from .prompt import (
     ILLUSTRATOR_AGENT_DESCRIPTION,
     ILLUSTRATOR_AGENT_INSTRUCTION,
     STORY_WRITER_AGENT_DESCRIPTION,
+    STORY_WRITER_ENGLISH_NORMALIZER_INSTRUCTION,
     STORY_WRITER_AGENT_INSTRUCTION,
 )
 from .settings import (
@@ -272,6 +273,61 @@ def extract_response_text(response) -> str:
     return ""
 
 
+NON_ENGLISH_SCRIPT_PATTERN = re.compile(
+    r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]"
+)
+
+
+def text_requires_english_normalization(text: str | None) -> bool:
+    if not text:
+        return False
+    return bool(NON_ENGLISH_SCRIPT_PATTERN.search(text))
+
+
+def story_writer_response_requires_english_normalization(writer_response: StoryWriterResponse) -> bool:
+    if writer_response.status != "story_ready":
+        return text_requires_english_normalization(writer_response.message)
+
+    fields_to_check = [
+        writer_response.message,
+        writer_response.title,
+        writer_response.theme,
+    ]
+
+    for character in writer_response.characters:
+        fields_to_check.extend(
+            [
+                character.name,
+                character.appearance_summary,
+                *character.visual_traits,
+                *character.clothing_or_accessories,
+                *character.signature_props,
+                *character.continuity_rules,
+            ]
+        )
+
+    for page in writer_response.pages:
+        fields_to_check.extend([page.page_text, page.visual_description])
+
+    return any(text_requires_english_normalization(text) for text in fields_to_check)
+
+
+def normalize_story_writer_response_to_english(
+    client: Client,
+    writer_response: StoryWriterResponse,
+) -> StoryWriterResponse:
+    response = client.models.generate_content(
+        model=STORY_WRITER_MODEL,
+        contents=[json.dumps(writer_response.model_dump(), ensure_ascii=False)],
+        config=types.GenerateContentConfig(
+            system_instruction=STORY_WRITER_ENGLISH_NORMALIZER_INSTRUCTION,
+            response_mime_type="application/json",
+            temperature=0.0,
+        ),
+    )
+    return StoryWriterResponse.model_validate_json(extract_response_text(response))
+
+
 def summarize_image_generation_response(response) -> str:
     details: list[str] = []
     response_text = extract_response_text(response)
@@ -320,6 +376,11 @@ async def generate_storybook_story(callback_context: CallbackContext):
         )
         raw_story_draft = extract_response_text(response)
         writer_response = StoryWriterResponse.model_validate_json(raw_story_draft)
+        if story_writer_response_requires_english_normalization(writer_response):
+            writer_response = normalize_story_writer_response_to_english(
+                client,
+                writer_response,
+            )
     except Exception as error:
         callback_context.state[STORYBOOK_STATE_KEY] = create_failed_storybook_state(
             callback_context.state.get(STORYBOOK_STATE_KEY),
