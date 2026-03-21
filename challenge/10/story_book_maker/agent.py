@@ -143,6 +143,7 @@ Shared art direction:
 - Use soft warm lighting, gentle textures, rounded shapes, and a calm pastel color palette.
 - Keep recurring characters, props, and environments visually identical across every page.
 - Preserve the same face shapes, body proportions, colors, clothing, accessories, and important props on all pages.
+- Follow the character bible exactly whenever it specifies a recurring character design.
 - Maintain consistent world design, camera language, brushwork, and emotional tone across the whole book.
 - If a detail is not explicitly repeated on a page, preserve it from the other pages instead of inventing a new variation.
 - The five illustrations must feel like consecutive spreads from one book, not separate unrelated images.
@@ -154,9 +155,81 @@ def build_storybook_overview(storybook_state) -> str:
         (
             f"Page {page.page_number}: "
             f"text={page.page_text!r}; "
-            f"visual_description={page.visual_description!r}"
+            f"visual_description={page.visual_description!r}; "
+            f"featured_character_ids={page.featured_character_ids!r}"
         )
         for page in storybook_state.pages
+    )
+
+
+def format_character_list(items: list[str]) -> str:
+    return ", ".join(items) if items else "none"
+
+
+def build_character_bible(storybook_state) -> str:
+    if not storybook_state.characters:
+        return "- No recurring character bible is available for this book."
+
+    character_sections = []
+    for character in storybook_state.characters:
+        character_sections.append(
+            "\n".join(
+                [
+                    f"- character_id: {character.character_id}",
+                    f"  name: {character.name}",
+                    f"  role: {character.role}",
+                    f"  appearance_summary: {character.appearance_summary}",
+                    f"  visual_traits: {format_character_list(character.visual_traits)}",
+                    "  clothing_or_accessories: "
+                    + format_character_list(character.clothing_or_accessories),
+                    f"  signature_props: {format_character_list(character.signature_props)}",
+                    f"  continuity_rules: {format_character_list(character.continuity_rules)}",
+                ]
+            )
+        )
+    return "\n\n".join(character_sections)
+
+
+def build_featured_character_bible(storybook_state, page: StoryPageState) -> str:
+    if not page.featured_character_ids:
+        return "- No recurring featured characters are required on this page."
+
+    featured_characters = [
+        character
+        for character in storybook_state.characters
+        if character.character_id in page.featured_character_ids
+    ]
+    if not featured_characters:
+        return (
+            "- The page declares featured_character_ids, but no matching character profiles were found."
+        )
+
+    return "\n".join(
+        (
+            f"- {character.character_id}: "
+            f"{character.appearance_summary}; "
+            f"visual_traits={format_character_list(character.visual_traits)}; "
+            f"clothing_or_accessories={format_character_list(character.clothing_or_accessories)}; "
+            f"signature_props={format_character_list(character.signature_props)}; "
+            f"continuity_rules={format_character_list(character.continuity_rules)}"
+        )
+        for character in featured_characters
+    )
+
+
+def build_non_negotiable_continuity_rules(page: StoryPageState) -> str:
+    featured_character_text = (
+        ", ".join(page.featured_character_ids)
+        if page.featured_character_ids
+        else "no recurring featured characters"
+    )
+    return "\n".join(
+        [
+            f"- Use only the declared recurring character designs for this page: {featured_character_text}.",
+            "- Do not redesign recurring characters with different faces, body proportions, colors, materials, clothing, accessories, or signature props.",
+            "- If the page-level visual description omits a recurring character detail, preserve the detail from the character bible instead of inventing a new variation.",
+            "- Keep the same world design, emotional tone, and visual identity as the other pages in the storybook.",
+        ]
     )
 
 
@@ -277,6 +350,9 @@ Book length: 5 pages
 
 {build_storybook_style_guide()}
 
+Character bible for this book:
+{build_character_bible(storybook_state)}
+
 Full storybook overview:
 {build_storybook_overview(storybook_state)}
 
@@ -284,11 +360,19 @@ Target page:
 - Page number: {page.page_number}
 - Story text: {page.page_text}
 - Visual description: {page.visual_description}
+- Featured character ids: {page.featured_character_ids}
+
+Featured characters for this page:
+{build_featured_character_bible(storybook_state, page)}
+
+Non-negotiable continuity rules:
+{build_non_negotiable_continuity_rules(page)}
 
 Requirements:
 - Make the image child-friendly, warm, and expressive.
 - Match the exact same character designs, environment design, palette, and illustration style used across the whole storybook.
 - Treat recurring characters and props as the same individuals from page to page.
+- Keep the recurring characters on this page visually identical to their character bible entries.
 - Keep visual continuity with the full storybook overview above.
 - Do not include captions, speech bubbles, or printed text inside the image.
 - Focus on a clear picture-book composition for this page only.

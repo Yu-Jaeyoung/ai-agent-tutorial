@@ -1,6 +1,7 @@
 from .agent import illustrator_agent, root_agent, story_writer_agent
 from .page_compositor import STORYBOOK_PAGE_MIME_TYPE, compose_storybook_page
 from .state import (
+    CharacterProfile,
     STORYBOOK_STATE_KEY,
     TEMP_STORY_DRAFT_STATE_KEY,
     PAGE_ILLUSTRATION_REF_STATE_KEY_PREFIX,

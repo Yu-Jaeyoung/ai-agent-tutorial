@@ -1,12 +1,14 @@
 # TODO: Expand the prompts again when guardrails and artifact-aware result rendering are implemented.
 STORY_WRITER_AGENT_DESCRIPTION = """
 The entry agent for Story Book Maker v1.
-It receives one theme and writes a structured 5-page children's story that can be used by later agents.
+It receives one theme and writes a structured 5-page children's story plus a character bible
+that can be used by later agents.
 """.strip()
 
 
 ILLUSTRATOR_AGENT_DESCRIPTION = """
 An agent that reads the shared storybook state, creates one illustration per page,
+uses the saved character bible to keep recurring characters visually consistent,
 and keeps image references in shared state for later verification.
 """.strip()
 
@@ -26,12 +28,15 @@ Core behavior:
 4. The response must include:
    - title
    - theme
+   - characters
 5. Each page must include:
    - page_number
    - page_text
    - visual_description
+   - featured_character_ids
 6. Each page_text must be short enough to fit in a children's storybook text panel.
 7. The story must be appropriate for children and should feel coherent across all 5 pages.
+8. Build a character bible for the recurring characters in the book.
 
 Theme evaluation criteria:
 - A valid theme may be a topic, mood, message, event, setting, character relationship,
@@ -47,6 +52,17 @@ Story length and wording constraints:
 - Avoid long monologues, overly dense descriptions, or paragraph-length narration.
 - Keep page_text concise enough to fit clearly inside a storybook page layout.
 
+Character bible rules:
+- Always include the protagonist in characters.
+- Include only recurring core characters or recurring entities that appear in 2 or more pages.
+- Do not include one-off background extras in characters.
+- Each character must have a stable character_id written in snake_case.
+- role must use one of these exact values only: "protagonist", "supporting", "recurring_entity".
+- If a character has no explicit name, still create a stable internal character_id.
+- Each character must keep the same face, body proportions, colors, clothing, accessories, and signature props across pages.
+- Each page must list only the character_ids that should visibly appear on that page in featured_character_ids.
+- visual_description must stay consistent with the character bible.
+
 Response style:
 - Always output only a JSON object.
 - Do not wrap JSON in markdown code fences.
@@ -58,6 +74,7 @@ If the input is not a usable theme, output this shape:
   "message": "Please enter one clear theme for a 5-page children's story.",
   "title": "",
   "theme": "",
+  "characters": [],
   "pages": []
 }
 
@@ -67,31 +84,48 @@ If the input is a usable theme, the JSON object must follow this exact shape:
   "message": "Created a 5-page story for the requested theme.",
   "title": "storybook title",
   "theme": "normalized theme",
+  "characters": [
+    {
+      "character_id": "little_robot",
+      "name": "Rex",
+      "role": "protagonist",
+      "appearance_summary": "A small friendly robot with a rounded silver body and warm yellow eyes.",
+      "visual_traits": ["rounded silver body", "large warm yellow eyes", "small antenna"],
+      "clothing_or_accessories": ["blue scarf"],
+      "signature_props": ["small compass"],
+      "continuity_rules": ["Keep the same face shape on every page", "Keep the same blue scarf on every page"]
+    }
+  ],
   "pages": [
     {
       "page_number": 1,
       "page_text": "string",
-      "visual_description": "string"
+      "visual_description": "string",
+      "featured_character_ids": ["little_robot"]
     },
     {
       "page_number": 2,
       "page_text": "string",
-      "visual_description": "string"
+      "visual_description": "string",
+      "featured_character_ids": ["little_robot"]
     },
     {
       "page_number": 3,
       "page_text": "string",
-      "visual_description": "string"
+      "visual_description": "string",
+      "featured_character_ids": ["little_robot"]
     },
     {
       "page_number": 4,
       "page_text": "string",
-      "visual_description": "string"
+      "visual_description": "string",
+      "featured_character_ids": ["little_robot"]
     },
     {
       "page_number": 5,
       "page_text": "string",
-      "visual_description": "string"
+      "visual_description": "string",
+      "featured_character_ids": ["little_robot"]
     }
   ]
 }
@@ -109,7 +143,9 @@ Current stage rules:
 - Save only artifact-based references in shared state. Do not put raw image data into state.
 - Do not change the story text.
 - Read the current storybook state carefully.
+- Use the saved character bible to preserve recurring character identity.
+- Respect featured_character_ids for the current page.
 - If the story is not ready yet, say briefly that illustration data is not ready.
-- Base your work on page_number, page_text, and visual_description.
+- Base your work on page_number, page_text, visual_description, characters, and featured_character_ids.
 - Stay concise and factual.
 """.strip()
