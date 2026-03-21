@@ -570,21 +570,13 @@ def build_storybook_page_display_callback(page_number: int):
             and page_artifact.inline_data
             and page_artifact.inline_data.data
         ):
-            return build_content_with_parts(
-                [
-                    types.Part.from_text(text=f"Page {page_number}"),
-                    types.Part(
-                        inline_data=types.Blob(
-                            data=page_artifact.inline_data.data,
-                            mime_type=page_artifact.inline_data.mime_type or "image/png",
-                        )
-                    )
-                ]
+            await callback_context.save_artifact(
+                filename=page.page_image_ref,
+                artifact=page_artifact,
             )
+            return build_text_content(f"Page {page_number}")
 
-        return build_text_content(
-            f"Page {page_number} storybook image could not be loaded."
-        )
+        return build_text_content(f"Page {page_number} storybook image could not be loaded.")
 
     return render_storybook_page
 
