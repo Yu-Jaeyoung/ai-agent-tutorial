@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import re
@@ -116,6 +117,23 @@ def save_local_image_bytes(
     image_path = build_local_asset_path(theme, page_number, asset_name, mime_type)
     image_path.write_bytes(image_bytes)
     return str(image_path.resolve())
+
+
+async def save_local_image_bytes_async(
+    theme: str,
+    page_number: int,
+    asset_name: str,
+    image_bytes: bytes,
+    mime_type: str,
+) -> str:
+    return await asyncio.to_thread(
+        save_local_image_bytes,
+        theme,
+        page_number,
+        asset_name,
+        image_bytes,
+        mime_type,
+    )
 
 
 def build_storybook_style_guide() -> str:
@@ -325,7 +343,6 @@ def extract_generated_image_bytes(response) -> tuple[bytes, str]:
 
 
 def generate_page_illustration(
-    client: Client,
     storybook_state,
     page: StoryPageState,
     existing_artifacts: list[str],
@@ -340,6 +357,7 @@ def generate_page_illustration(
     if existing_artifact:
         return existing_artifact, None, None
 
+    client = Client(api_key=GOOGLE_API_KEY)
     response = client.models.generate_content(
         model=ILLUSTRATOR_MODEL,
         contents=[build_page_illustration_prompt(storybook_state, page)],
@@ -531,12 +549,20 @@ def render_storybook_title(callback_context: CallbackContext):
 def build_storybook_page_display_callback(page_number: int):
     async def render_storybook_page(callback_context: CallbackContext):
         storybook_state = load_storybook_state(callback_context.state.get(STORYBOOK_STATE_KEY))
-        if storybook_state.status != "illustration_ready":
+        if storybook_state.status == "failed":
             return build_empty_content()
+        if storybook_state.status != "illustration_ready":
+            return build_text_content(
+                f"Page {page_number} storybook image is not ready yet."
+            )
 
         page = find_story_page(storybook_state, page_number)
-        if page is None or not page.page_image_ref:
-            return build_empty_content()
+        if page is None:
+            return build_text_content(f"Page {page_number} data could not be found.")
+        if not page.page_image_ref:
+            return build_text_content(
+                f"Page {page_number} storybook image reference is missing."
+            )
 
         page_artifact = await callback_context.load_artifact(page.page_image_ref)
         if (
@@ -546,6 +572,7 @@ def build_storybook_page_display_callback(page_number: int):
         ):
             return build_content_with_parts(
                 [
+                    types.Part.from_text(text=f"Page {page_number}"),
                     types.Part(
                         inline_data=types.Blob(
                             data=page_artifact.inline_data.data,
@@ -595,7 +622,7 @@ def build_page_illustration_callback(page_number: int):
             )
             if illustration_data:
                 illustration_bytes, illustration_mime_type = illustration_data
-                save_local_image_bytes(
+                await save_local_image_bytes_async(
                     theme=storybook_state.theme,
                     page_number=page.page_number,
                     asset_name="illustration",
@@ -608,7 +635,7 @@ def build_page_illustration_callback(page_number: int):
             )
             if page_image_data:
                 page_image_bytes, page_image_mime_type = page_image_data
-                save_local_image_bytes(
+                await save_local_image_bytes_async(
                     theme=storybook_state.theme,
                     page_number=page.page_number,
                     asset_name="storybook",
@@ -624,7 +651,6 @@ def build_page_illustration_callback(page_number: int):
             return build_text_content(summarize_page_illustration_completed(page_number))
 
         try:
-            client = Client(api_key=GOOGLE_API_KEY)
             existing_artifacts = await callback_context.list_artifacts()
             illustration_ref = (
                 existing_illustration_ref
@@ -642,7 +668,7 @@ def build_page_illustration_callback(page_number: int):
                 illustration_data = await load_artifact_bytes(callback_context, illustration_ref)
                 if illustration_data:
                     illustration_bytes, illustration_mime_type = illustration_data
-                    save_local_image_bytes(
+                    await save_local_image_bytes_async(
                         theme=storybook_state.theme,
                         page_number=page.page_number,
                         asset_name="illustration",
@@ -651,11 +677,11 @@ def build_page_illustration_callback(page_number: int):
                     )
 
             if not illustration_data:
-                illustration_ref, illustration_artifact, illustration_data = generate_page_illustration(
-                    client=client,
-                    storybook_state=storybook_state,
-                    page=page,
-                    existing_artifacts=existing_artifacts,
+                illustration_ref, illustration_artifact, illustration_data = await asyncio.to_thread(
+                    generate_page_illustration,
+                    storybook_state,
+                    page,
+                    existing_artifacts,
                 )
                 if illustration_artifact is not None:
                     await callback_context.save_artifact(
@@ -667,7 +693,7 @@ def build_page_illustration_callback(page_number: int):
                 if not illustration_data:
                     raise ValueError("The illustration artifact could not be loaded.")
                 illustration_bytes, illustration_mime_type = illustration_data
-                save_local_image_bytes(
+                await save_local_image_bytes_async(
                     theme=storybook_state.theme,
                     page_number=page.page_number,
                     asset_name="illustration",
@@ -690,7 +716,7 @@ def build_page_illustration_callback(page_number: int):
                 page_image_data = await load_artifact_bytes(callback_context, page_image_ref)
                 if page_image_data:
                     page_image_bytes, page_image_mime_type = page_image_data
-                    save_local_image_bytes(
+                    await save_local_image_bytes_async(
                         theme=storybook_state.theme,
                         page_number=page.page_number,
                         asset_name="storybook",
@@ -702,17 +728,18 @@ def build_page_illustration_callback(page_number: int):
 
             if not page_image_ref:
                 illustration_bytes, _ = illustration_data
-                page_image_ref, page_image_artifact, page_image_data = build_storybook_page_asset(
-                    storybook_state=storybook_state,
-                    page=page,
-                    illustration_bytes=illustration_bytes,
+                page_image_ref, page_image_artifact, page_image_data = await asyncio.to_thread(
+                    build_storybook_page_asset,
+                    storybook_state,
+                    page,
+                    illustration_bytes,
                 )
                 await callback_context.save_artifact(
                     filename=page_image_ref,
                     artifact=page_image_artifact,
                 )
                 page_image_bytes, page_image_mime_type = page_image_data
-                save_local_image_bytes(
+                await save_local_image_bytes_async(
                     theme=storybook_state.theme,
                     page_number=page.page_number,
                     asset_name="storybook",

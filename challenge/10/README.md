@@ -17,6 +17,7 @@ Open the ADK Web UI and select `story_book_maker`.
 
 ## What To Verify
 
+- `GET /debug/trace/... 404` logs may appear in ADK Web and do not necessarily indicate a workflow failure when the corresponding `/graph` request returns `200 OK`.
 - The workflow root loads as `StoryBookWorkflow`.
 - The writer stage shows progress messages instead of raw JSON output.
 - The writer stage produces a title and exactly 5 story pages in shared state.
@@ -31,9 +32,7 @@ Open the ADK Web UI and select `story_book_maker`.
 - The final response renders the complete storybook with:
   - `Title`
   - `Page 1` to `Page 5`
-  - `Story Text`
-  - `Illustration Artifact`
-  - `Storybook Page Artifact`
+  - the composed `storybook_page_N` images shown directly in the UI
 - The final `storybook.status` is `illustration_ready`.
 - The final page Artifact should already contain the rendered Korean story text inside the image.
 
