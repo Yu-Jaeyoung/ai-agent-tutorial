@@ -426,6 +426,7 @@ def update_review_memory(state: LearningState, db_path: Path = MEMORY_DB_PATH) -
             "user_answer": review_state["user_answer"],
             "expected_meaning": review_state["expected_meaning"],
             "source_sentence": review_state["current_source_sentence"],
+            "explanation": review_state["explanation"],
         }
     ]
     return {
@@ -450,33 +451,24 @@ def next_review_or_finish(state: LearningState) -> dict:
     completed_count = len(review_history)
     reached_limit = completed_count >= session_limit
 
-    summary_lines = []
-    summary_lines.append("정답입니다." if judgment == "correct" else "틀렸습니다.")
-    summary_lines.append(f"정답: {review_state['expected_meaning']}")
-    summary_lines.append(f"문장: {review_state['current_source_sentence']}")
-    summary_lines.append(f"설명: {review_state['explanation']}")
-
     if reached_limit:
-        summary_lines.append("기본 3개 단어 복습을 마쳤습니다.")
         return {
-            "assistant_message": "\n".join(summary_lines),
+            "assistant_message": "기본 3개 단어 복습을 마쳤어요.",
             "review_state": None,
             "continue_review": False,
             "error_message": None,
         }
 
     if review_queue:
-        summary_lines.append("복습을 계속하려면 다시 `review`를 입력해 주세요.")
         return {
-            "assistant_message": "\n".join(summary_lines),
+            "assistant_message": "다음 문제를 보려면 `review`를 다시 입력해 주세요.",
             "review_state": None,
             "continue_review": None,
             "error_message": None,
         }
 
-    summary_lines.append("남은 복습 단어가 없습니다.")
     return {
-        "assistant_message": "\n".join(summary_lines),
+        "assistant_message": "지금 복습할 단어를 모두 확인했어요.",
         "review_state": None,
         "continue_review": False,
         "error_message": None,

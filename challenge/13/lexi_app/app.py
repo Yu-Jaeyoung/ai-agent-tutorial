@@ -107,10 +107,65 @@ def format_learning_message(payload: AssistantTurnPayload) -> str:
     return "\n\n".join(lines)
 
 
+def format_review_question(payload: AssistantTurnPayload) -> str:
+    review_state = payload.review_state
+    if not review_state:
+        return payload.assistant_text or "복습 문제를 준비하지 못했습니다."
+
+    return "\n\n".join(
+        [
+            "복습 문제를 준비했어요.",
+            f"**단어**: `{review_state['current_word']}`",
+            "**문장**:",
+            f"> {review_state['current_source_sentence']}",
+            "이 문맥에서 이 단어의 한국어 뜻을 입력해 주세요.",
+        ]
+    )
+
+
+def format_review_feedback(payload: AssistantTurnPayload) -> str:
+    latest = payload.latest_review_item
+    if not latest:
+        return payload.assistant_text or "복습 결과를 정리하지 못했습니다."
+
+    is_correct = latest["judgment"] == "correct"
+    title = "맞았어요." if is_correct else "조금 아쉬워요."
+    explanation = latest.get("explanation", "").strip()
+    lines = [title]
+
+    if is_correct:
+        lines.append(f"정답은 **{latest['expected_meaning']}** 입니다.")
+        if explanation and explanation != "정답입니다. 현재 문맥에서의 의미를 정확히 이해했습니다.":
+            lines.append(explanation)
+    else:
+        lines.append(f"내 답변: **{latest['user_answer']}**")
+        lines.append(f"정답: **{latest['expected_meaning']}**")
+        if explanation:
+            lines.append(explanation)
+
+    if payload.assistant_text:
+        lines.append(payload.assistant_text)
+
+    return "\n\n".join(lines)
+
+
 def format_payload(payload: AssistantTurnPayload) -> str:
     if payload.mode == "learning":
         return format_learning_message(payload)
+    if payload.mode == "review_question":
+        return format_review_question(payload)
+    if payload.mode == "review_feedback":
+        return format_review_feedback(payload)
     return payload.assistant_text or "처리 결과가 없습니다."
+
+
+def get_processing_message(user_text: str, previous_state: LearningState | None) -> str:
+    normalized = user_text.strip().lower()
+    if normalized == "review" or "review" in normalized or "복습" in user_text or "퀴즈" in user_text:
+        return "복습할 단어와 문제를 준비하고 있어요..."
+    if previous_state and previous_state.get("review_state"):
+        return "답변을 확인하고 복습 결과를 정리하고 있어요..."
+    return "문장과 기술 용어를 분석하고 학습 카드를 만들고 있어요..."
 
 
 def render_chat_history() -> None:
@@ -120,21 +175,29 @@ def render_chat_history() -> None:
 
 
 def handle_user_input(user_text: str) -> None:
+    previous_state = get_learning_state()
     append_chat_message("user", user_text)
     with st.chat_message("user"):
         st.markdown(user_text)
 
-    try:
-        next_state = run_turn(get_learning_state(), user_text)
-        payload = summarize_turn_result(next_state)
-        assistant_text = format_payload(payload)
-        set_learning_state(next_state)
-    except Exception as exc:
-        assistant_text = f"요청 처리 중 오류가 발생했습니다.\n\n{exc}"
+    with st.chat_message("assistant"):
+        status_placeholder = st.empty()
+        processing_message = get_processing_message(user_text, previous_state)
+        status_placeholder.info(processing_message)
+
+        try:
+            with st.spinner("잠시만요. 처리 중입니다..."):
+                next_state = run_turn(previous_state, user_text)
+                payload = summarize_turn_result(next_state)
+                assistant_text = format_payload(payload)
+                set_learning_state(next_state)
+        except Exception as exc:
+            assistant_text = f"요청 처리 중 오류가 발생했습니다.\n\n{exc}"
+
+        status_placeholder.empty()
+        st.markdown(assistant_text)
 
     append_chat_message("assistant", assistant_text)
-    with st.chat_message("assistant"):
-        st.markdown(assistant_text)
 
 
 def main() -> None:

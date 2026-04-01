@@ -15,6 +15,7 @@ class AssistantTurnPayload(BaseModel):
     route: str | None
     vocabulary_entries: list[VocabularyEntry]
     review_state: ReviewState | None
+    latest_review_item: dict[str, str] | None
     memory_count: int
     review_queue_length: int
     review_judge_method: str | None
@@ -61,6 +62,8 @@ def summarize_turn_result(state: LearningState) -> AssistantTurnPayload:
     vocabulary_entries = state.get("vocabulary_entries", [])
     review_state = state.get("review_state")
     review_judge_method = state.get("review_judge_method")
+    review_history = state.get("review_history", [])
+    latest_review_item = review_history[-1] if review_history else None
 
     if state.get("error_message"):
         mode: Literal["learning", "review_question", "review_feedback", "error"] = "error"
@@ -77,6 +80,7 @@ def summarize_turn_result(state: LearningState) -> AssistantTurnPayload:
         route=route,
         vocabulary_entries=vocabulary_entries,
         review_state=review_state,
+        latest_review_item=latest_review_item,
         memory_count=len(state.get("memory_records", [])),
         review_queue_length=len(state.get("review_queue", [])),
         review_judge_method=review_judge_method,
