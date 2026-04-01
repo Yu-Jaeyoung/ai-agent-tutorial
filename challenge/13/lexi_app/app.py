@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import os
-from typing import Any
 
 import streamlit as st
 
+from .memory import load_memory_records
 from .service import AssistantTurnPayload, build_graph, run_turn, summarize_turn_result
 from .state import LearningState, VocabularyEntry
 
@@ -61,6 +61,22 @@ def ensure_app_state() -> None:
     st.session_state[APP_READY_SESSION_KEY] = True
     if not get_chat_messages():
         reset_session()
+
+
+def render_sidebar() -> None:
+    state = get_learning_state()
+    memory_records = load_memory_records()
+    review_state = state.get("review_state") if state else None
+    review_queue_length = len(state.get("review_queue", [])) if state else 0
+
+    with st.sidebar:
+        st.header("Session")
+        st.metric("Saved memory", len(memory_records))
+        st.metric("Review active", "Yes" if review_state else "No")
+        st.metric("Review queue", review_queue_length)
+        if st.button("Reset Session", use_container_width=True):
+            reset_session()
+            st.rerun()
 
 
 def format_entry(entry: VocabularyEntry, index: int) -> str:
@@ -128,6 +144,7 @@ def main() -> None:
 
     st.title("LeXi")
     st.caption("영어 기술 문장을 학습 카드로 정리하고, 저장한 단어를 복습하는 Streamlit 학습 에이전트")
+    render_sidebar()
 
     render_chat_history()
 
