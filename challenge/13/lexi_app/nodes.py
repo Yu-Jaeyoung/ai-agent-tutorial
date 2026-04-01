@@ -116,7 +116,7 @@ def normalize_korean_meaning(text: str) -> str:
 def analyze_request(state: LearningState) -> dict:
     text = state["input_text"].strip()
 
-    if state.get("review_state") and contains_hangul(text):
+    if state.get("review_state") and text and not is_explicit_review_request(text):
         return {"route": "review", "error_message": None, "assistant_message": None}
 
     if not text:
@@ -138,11 +138,19 @@ def analyze_request(state: LearningState) -> dict:
     if is_explicit_review_request(text):
         return {"route": "review", "assistant_message": None, "error_message": None}
 
+    if contains_hangul(text):
+        message = "LeXi는 영어 기술 문서 학습과 복습 요청만 처리합니다. 영어 기술 문장, 영어 용어, 또는 복습 요청을 입력해 주세요."
+        return {"route": "invalid", "assistant_message": message, "error_message": message}
+
     if looks_like_single_term(text):
         return {"route": "single_term", "assistant_message": None, "error_message": None}
 
     if looks_like_english_paragraph(text):
         return {"route": "paragraph", "assistant_message": None, "error_message": None}
+
+    if not english_tokens(text):
+        message = "LeXi는 영어 기술 문서 학습과 복습 요청만 처리합니다. 영어 기술 문장, 영어 용어, 또는 복습 요청을 입력해 주세요."
+        return {"route": "invalid", "assistant_message": message, "error_message": message}
 
     prompt = f"""
 You are classifying an English technical vocabulary study request.
