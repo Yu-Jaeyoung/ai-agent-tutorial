@@ -36,6 +36,8 @@ Lexi는 영어 기술 문서 학습 에이전트다.
 
 ```text
 사용자: Caching reduces latency, but inconsistent invalidation can cause stale data.
+LeXi: 문장과 기술 용어를 분석하고 학습 카드를 만들고 있어요...
+
 LeXi: 이 입력에서 학습 가치가 높은 표현을 정리했어요.
 
 1. latency
@@ -49,9 +51,18 @@ LeXi: 이 입력에서 학습 가치가 높은 표현을 정리했어요.
 - 설명: 캐시 데이터를 더 이상 유효하지 않게 처리하는 동작을 뜻합니다.
 
 사용자: review
-LeXi: 단어: latency
+LeXi: 복습할 단어와 문제를 준비하고 있어요...
+
+LeXi: 복습 문제를 준비했어요.
+
+단어: latency
 문장: Caching reduces latency, but inconsistent invalidation can cause stale data.
 이 문맥에서 뜻을 한국어로 입력해 주세요.
+
+사용자: 지연 시간
+LeXi: 맞았어요.
+정답은 지연 시간 입니다.
+다음 문제를 보려면 review를 다시 입력해 주세요.
 ```
 
 ## Advanced Pattern
