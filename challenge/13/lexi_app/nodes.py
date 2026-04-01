@@ -201,15 +201,17 @@ def normalize_term_request(state: LearningState) -> dict:
 
     prompt = f"""
 You are preparing study targets for a Korean developer reading English technical documents.
-Normalize the input into up to 5 English technical terms to study.
-Keep the terms concise and preserve the original technical meaning.
+Normalize the input into exactly one English technical term or short phrase to study.
+Keep the original technical meaning and do not expand it into related concepts.
 Return only the structured output.
 
 Input:
 {text}
 """.strip()
     result = get_term_normalizer_llm().invoke(prompt)
-    terms_to_study = dedupe_preserve_order(result.terms_to_study)[:5]
+    terms_to_study = dedupe_preserve_order(result.terms_to_study)[:1]
+    if not terms_to_study:
+        terms_to_study = [text]
     return {
         "candidate_words": terms_to_study,
         "terms_to_study": terms_to_study,

@@ -13,6 +13,8 @@ CHAT_MESSAGES_SESSION_KEY = "chat_messages"
 LEARNING_STATE_SESSION_KEY = "learning_state"
 GRAPH_SESSION_KEY = "graph"
 APP_READY_SESSION_KEY = "app_ready"
+PROCESSING_SESSION_KEY = "is_processing"
+PENDING_INPUT_SESSION_KEY = "pending_input"
 WELCOME_MESSAGE = (
     "영어 기술 문장, 영어 기술 용어, 또는 `review`를 입력해 주세요.\n\n"
     "LeXi가 문맥 기반 단어 카드 생성과 저장 기반 복습을 도와드립니다."
@@ -48,9 +50,27 @@ def get_learning_state() -> LearningState | None:
     return st.session_state.get(LEARNING_STATE_SESSION_KEY)
 
 
+def is_processing() -> bool:
+    return st.session_state.get(PROCESSING_SESSION_KEY, False)
+
+
+def set_processing(value: bool) -> None:
+    st.session_state[PROCESSING_SESSION_KEY] = value
+
+
+def get_pending_input() -> str | None:
+    return st.session_state.get(PENDING_INPUT_SESSION_KEY)
+
+
+def set_pending_input(value: str | None) -> None:
+    st.session_state[PENDING_INPUT_SESSION_KEY] = value
+
+
 def reset_session() -> None:
     st.session_state[CHAT_MESSAGES_SESSION_KEY] = [{"role": "assistant", "content": WELCOME_MESSAGE}]
     st.session_state[LEARNING_STATE_SESSION_KEY] = None
+    st.session_state[PROCESSING_SESSION_KEY] = False
+    st.session_state[PENDING_INPUT_SESSION_KEY] = None
 
 
 def ensure_app_state() -> None:
@@ -193,11 +213,15 @@ def handle_user_input(user_text: str) -> None:
                 set_learning_state(next_state)
         except Exception as exc:
             assistant_text = f"요청 처리 중 오류가 발생했습니다.\n\n{exc}"
+        finally:
+            set_processing(False)
+            set_pending_input(None)
 
         status_placeholder.empty()
         st.markdown(assistant_text)
 
     append_chat_message("assistant", assistant_text)
+    st.rerun()
 
 
 def main() -> None:
@@ -211,6 +235,16 @@ def main() -> None:
 
     render_chat_history()
 
-    prompt = st.chat_input("영어 기술 문장, 기술 용어, 또는 review를 입력해 주세요.")
-    if prompt:
-        handle_user_input(prompt.strip())
+    prompt = st.chat_input(
+        "영어 기술 문장, 기술 용어, 또는 review를 입력해 주세요.",
+        disabled=is_processing(),
+    )
+
+    if prompt and not is_processing():
+        set_pending_input(prompt.strip())
+        set_processing(True)
+        st.rerun()
+
+    pending_input = get_pending_input()
+    if pending_input and is_processing():
+        handle_user_input(pending_input)
