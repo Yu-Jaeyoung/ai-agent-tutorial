@@ -4,6 +4,13 @@
 
 `LeXi`는 [`challenge/12/main.ipynb`](/Users/jaeyoung/Developments/study/ai-agent-tutorial/challenge/12/main.ipynb)에 구현된 LeXi v2를 Python application으로 재구성한 영어 기술 문서 학습 에이전트다. 이번 단계에서는 notebook 대신 `Streamlit` 기반 채팅 UI를 사용해, 학습 입력부터 단어 카드 생성과 복습까지 한 화면에서 끝까지 사용할 수 있게 만든다.
 
+사용자는 하나의 채팅 입력창으로 아래 작업을 모두 수행할 수 있다.
+
+- 영어 기술 문단 입력
+- 영어 기술 용어 입력
+- `review` 요청
+- 복습 답안 입력
+
 ### 에이전트 이름
 
 - `LeXi`
@@ -28,7 +35,7 @@
 
 ```text
 사용자: Caching reduces latency, but inconsistent invalidation can cause stale data.
-LeXi: 이 문장에서 학습 가치가 높은 단어를 정리했어요.
+LeXi: 이 입력에서 학습 가치가 높은 표현을 정리했어요.
 
 1. latency
 - 뜻: 지연 시간
@@ -41,8 +48,7 @@ LeXi: 이 문장에서 학습 가치가 높은 단어를 정리했어요.
 - 설명: 캐시 데이터를 더 이상 유효하지 않게 처리하는 동작을 뜻합니다.
 
 사용자: review
-LeXi: 좋아요. 복습을 시작할게요.
-현재 단어: latency
+LeXi: 단어: latency
 문장: Caching reduces latency, but inconsistent invalidation can cause stale data.
 이 문맥에서 뜻을 한국어로 입력해 주세요.
 ```
@@ -69,6 +75,14 @@ flowchart TD
     E --> I["Present Question -> Judge Answer -> Update Memory"]
 ```
 
+## App Behavior
+
+- `st.chat_input`과 `st.chat_message` 기반의 단일 채팅 UI를 사용한다.
+- 학습 결과는 카드형 assistant 메시지로 렌더링한다.
+- review 요청 시 현재 단어와 예문을 보여 주고, 다음 사용자 입력을 답안으로 이어받는다.
+- sidebar에서 저장된 memory 개수, review 활성 상태, 남은 queue 길이를 확인할 수 있다.
+- `Reset Session`은 채팅 세션만 초기화하고 SQLite memory는 유지한다.
+
 ## Run
 
 ```bash
@@ -80,9 +94,28 @@ uv run streamlit run challenge/13/run.py
 - required: `GOOGLE_API_KEY`
 - optional: `GOOGLE_GENAI_MODEL`
 
+## Project Structure
+
+```text
+challenge/13/
+  README.md
+  run.py
+  lexi_app/
+    app.py
+    config.py
+    state.py
+    schemas.py
+    tools.py
+    memory.py
+    nodes.py
+    graph.py
+    service.py
+```
+
 ## Implementation Notes
 
 - 실행 진입점은 [`challenge/13/run.py`](/Users/jaeyoung/Developments/study/ai-agent-tutorial/challenge/13/run.py)다.
 - 앱 패키지는 `challenge/13/lexi_app/` 아래에 둔다.
 - SQLite memory는 `challenge/13/lexi_memory.db`를 사용해 12번 실험 데이터와 분리한다.
 - 목표는 12번 notebook의 학습/복습 흐름을 Python 모듈과 Streamlit UI로 옮기는 것이다.
+- 대표 패턴은 `Orchestrator-Workers`이며, 구현 안에서 `Prompt Chaining`과 `Parallelization`도 함께 드러난다.
