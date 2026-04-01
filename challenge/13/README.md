@@ -2,7 +2,8 @@
 
 ## LeXi
 
-`LeXi`는 [`challenge/12/main.ipynb`](/Users/jaeyoung/Developments/study/ai-agent-tutorial/challenge/12/main.ipynb)에 구현된 LeXi v2를 Python application으로 재구성한 영어 기술 문서 학습 에이전트다. 이번 단계에서는 notebook 대신 `Streamlit` 기반 채팅 UI를 사용해, 학습 입력부터 단어 카드 생성과 복습까지 한 화면에서 끝까지 사용할 수 있게 만든다.
+Lexi는 영어 기술 문서 학습 에이전트다. 
+`Streamlit` 기반 채팅 UI를 사용해, 학습 입력부터 단어 카드 생성과 복습까지 한 화면에서 끝까지 사용할 수 있게 만든다.
 
 사용자는 하나의 채팅 입력창으로 아래 작업을 모두 수행할 수 있다.
 
