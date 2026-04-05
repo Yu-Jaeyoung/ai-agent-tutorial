@@ -4,7 +4,7 @@ import os
 
 import streamlit as st
 
-from .memory import load_memory_records
+from .memory import list_users, load_memory_records
 from .service import AssistantTurnPayload, build_graph, run_turn, summarize_turn_result
 from .state import LearningState, VocabularyEntry
 
@@ -15,6 +15,7 @@ GRAPH_SESSION_KEY = "graph"
 APP_READY_SESSION_KEY = "app_ready"
 PROCESSING_SESSION_KEY = "is_processing"
 PENDING_INPUT_SESSION_KEY = "pending_input"
+USER_ID_SESSION_KEY = "user_id"
 WELCOME_MESSAGE = (
     "영어 기술 문장, 영어 기술 용어, 또는 `review`를 입력해 주세요.\n\n"
     "LeXi가 문맥 기반 단어 카드 생성과 저장 기반 복습을 도와드립니다."
@@ -32,6 +33,14 @@ def load_runtime_secrets() -> None:
 
     if secret:
         os.environ["GOOGLE_API_KEY"] = str(secret)
+
+
+def get_user_id() -> str | None:
+    return st.session_state.get(USER_ID_SESSION_KEY)
+
+
+def set_user_id(user_id: str) -> None:
+    st.session_state[USER_ID_SESSION_KEY] = user_id
 
 
 def get_chat_messages() -> list[dict[str, str]]:
@@ -73,6 +82,11 @@ def reset_session() -> None:
     st.session_state[PENDING_INPUT_SESSION_KEY] = None
 
 
+def logout_user() -> None:
+    reset_session()
+    st.session_state.pop(USER_ID_SESSION_KEY, None)
+
+
 def ensure_app_state() -> None:
     if st.session_state.get(APP_READY_SESSION_KEY):
         return
@@ -83,19 +97,54 @@ def ensure_app_state() -> None:
         reset_session()
 
 
+def render_user_select() -> bool:
+    st.title("LeXi")
+    st.caption("영어 기술 문장을 학습 카드로 정리하고, 저장한 단어를 복습하는 Streamlit 학습 에이전트")
+
+    existing_users = list_users()
+
+    tab_existing, tab_new = st.tabs(["기존 사용자", "새 사용자"])
+
+    with tab_existing:
+        if existing_users:
+            selected = st.selectbox("사용자를 선택해 주세요.", existing_users, index=None, placeholder="선택...")
+            if st.button("시작하기", key="btn_existing", disabled=not selected, use_container_width=True):
+                set_user_id(selected)
+                reset_session()
+                st.rerun()
+        else:
+            st.info("아직 등록된 사용자가 없습니다. 새 사용자로 시작해 주세요.")
+
+    with tab_new:
+        new_name = st.text_input("사용자 이름을 입력해 주세요.", placeholder="예: jaeyoung")
+        if st.button("등록 후 시작", key="btn_new", disabled=not new_name, use_container_width=True):
+            name = new_name.strip()
+            if name:
+                set_user_id(name)
+                reset_session()
+                st.rerun()
+
+    return False
+
+
 def render_sidebar() -> None:
+    user_id = get_user_id()
     state = get_learning_state()
-    memory_records = load_memory_records()
+    memory_records = load_memory_records(user_id) if user_id else []
     review_state = state.get("review_state") if state else None
     review_queue_length = len(state.get("review_queue", [])) if state else 0
 
     with st.sidebar:
         st.header("Session")
+        st.caption(f"사용자: **{user_id}**")
         st.metric("Saved memory", len(memory_records))
         st.metric("Review active", "Yes" if review_state else "No")
         st.metric("Review queue", review_queue_length)
         if st.button("Reset Session", use_container_width=True):
             reset_session()
+            st.rerun()
+        if st.button("사용자 전환", use_container_width=True):
+            logout_user()
             st.rerun()
 
 
@@ -195,6 +244,7 @@ def render_chat_history() -> None:
 
 
 def handle_user_input(user_text: str) -> None:
+    user_id = get_user_id() or "default"
     previous_state = get_learning_state()
     append_chat_message("user", user_text)
     with st.chat_message("user"):
@@ -207,7 +257,7 @@ def handle_user_input(user_text: str) -> None:
 
         try:
             with st.spinner("잠시만요. 처리 중입니다..."):
-                next_state = run_turn(previous_state, user_text)
+                next_state = run_turn(previous_state, user_text, user_id=user_id)
                 payload = summarize_turn_result(next_state)
                 assistant_text = format_payload(payload)
                 set_learning_state(next_state)
@@ -228,6 +278,10 @@ def main() -> None:
     load_runtime_secrets()
     st.set_page_config(page_title="LeXi", page_icon="L")
     ensure_app_state()
+
+    if not get_user_id():
+        render_user_select()
+        return
 
     st.title("LeXi")
     st.caption("영어 기술 문장을 학습 카드로 정리하고, 저장한 단어를 복습하는 Streamlit 학습 에이전트")

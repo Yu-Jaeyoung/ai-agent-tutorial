@@ -25,8 +25,8 @@ def build_graph():
     return compile_graph()
 
 
-def prepare_turn_state(previous_state: LearningState | None, user_text: str) -> LearningState:
-    next_state = make_initial_state(user_text)
+def prepare_turn_state(previous_state: LearningState | None, user_text: str, user_id: str = "default") -> LearningState:
+    next_state = make_initial_state(user_text, user_id=user_id)
     if not previous_state:
         return next_state
 
@@ -50,9 +50,9 @@ def prepare_turn_state(previous_state: LearningState | None, user_text: str) -> 
     return next_state
 
 
-def run_turn(previous_state: LearningState | None, user_text: str) -> LearningState:
+def run_turn(previous_state: LearningState | None, user_text: str, user_id: str = "default") -> LearningState:
     graph = build_graph()
-    prepared_state = prepare_turn_state(previous_state, user_text)
+    prepared_state = prepare_turn_state(previous_state, user_text, user_id=user_id)
     return graph.invoke(prepared_state)
 
 

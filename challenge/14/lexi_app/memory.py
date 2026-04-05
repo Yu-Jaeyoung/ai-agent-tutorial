@@ -7,6 +7,8 @@ from pathlib import Path
 from .config import MEMORY_DB_PATH
 from .state import MemoryRecord, UTC, VocabularyEntry
 
+DEFAULT_USER_ID = "default"
+
 
 def initialize_memory_db(db_path: Path = MEMORY_DB_PATH) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -14,7 +16,8 @@ def initialize_memory_db(db_path: Path = MEMORY_DB_PATH) -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS study_memory (
-                word TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL DEFAULT 'default',
+                word TEXT NOT NULL,
                 lemma TEXT NOT NULL,
                 meaning_in_context TEXT NOT NULL,
                 source_sentence TEXT NOT NULL,
@@ -24,7 +27,8 @@ def initialize_memory_db(db_path: Path = MEMORY_DB_PATH) -> None:
                 created_at TEXT NOT NULL,
                 review_count INTEGER NOT NULL DEFAULT 0,
                 last_reviewed_at TEXT,
-                last_review_result TEXT
+                last_review_result TEXT,
+                PRIMARY KEY (user_id, word)
             )
             """
         )
@@ -35,6 +39,11 @@ def initialize_memory_db(db_path: Path = MEMORY_DB_PATH) -> None:
 def _migrate_schema(db_path: Path) -> None:
     with sqlite3.connect(db_path) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(study_memory)").fetchall()}
+
+        if "user_id" not in columns:
+            conn.execute("ALTER TABLE study_memory ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'")
+            conn.commit()
+
         if "why_it_matters" not in columns:
             conn.execute("ALTER TABLE study_memory ADD COLUMN why_it_matters TEXT NOT NULL DEFAULT ''")
         if "study_priority" not in columns:
@@ -42,7 +51,15 @@ def _migrate_schema(db_path: Path) -> None:
         conn.commit()
 
 
-def load_memory_records(db_path: Path = MEMORY_DB_PATH) -> list[MemoryRecord]:
+def list_users(db_path: Path = MEMORY_DB_PATH) -> list[str]:
+    if not db_path.exists():
+        return []
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute("SELECT DISTINCT user_id FROM study_memory ORDER BY user_id").fetchall()
+    return [row[0] for row in rows]
+
+
+def load_memory_records(user_id: str = DEFAULT_USER_ID, db_path: Path = MEMORY_DB_PATH) -> list[MemoryRecord]:
     if not db_path.exists():
         return []
 
@@ -63,18 +80,20 @@ def load_memory_records(db_path: Path = MEMORY_DB_PATH) -> list[MemoryRecord]:
                 last_reviewed_at,
                 last_review_result
             FROM study_memory
+            WHERE user_id = ?
             ORDER BY created_at ASC
-            """
+            """,
+            (user_id,),
         ).fetchall()
     return [dict(row) for row in rows]
 
 
-def upsert_memory_record(entry: VocabularyEntry, db_path: Path = MEMORY_DB_PATH) -> None:
+def upsert_memory_record(entry: VocabularyEntry, user_id: str = DEFAULT_USER_ID, db_path: Path = MEMORY_DB_PATH) -> None:
     initialize_memory_db(db_path)
     with sqlite3.connect(db_path) as conn:
         existing = conn.execute(
-            "SELECT created_at, review_count, last_reviewed_at, last_review_result FROM study_memory WHERE word = ?",
-            (entry["word"],),
+            "SELECT created_at, review_count, last_reviewed_at, last_review_result FROM study_memory WHERE user_id = ? AND word = ?",
+            (user_id, entry["word"]),
         ).fetchone()
 
         created_at = existing[0] if existing else datetime.now(UTC).isoformat()
@@ -85,6 +104,7 @@ def upsert_memory_record(entry: VocabularyEntry, db_path: Path = MEMORY_DB_PATH)
         conn.execute(
             """
             INSERT INTO study_memory (
+                user_id,
                 word,
                 lemma,
                 meaning_in_context,
@@ -96,8 +116,8 @@ def upsert_memory_record(entry: VocabularyEntry, db_path: Path = MEMORY_DB_PATH)
                 review_count,
                 last_reviewed_at,
                 last_review_result
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(word) DO UPDATE SET
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, word) DO UPDATE SET
                 lemma = excluded.lemma,
                 meaning_in_context = excluded.meaning_in_context,
                 source_sentence = excluded.source_sentence,
@@ -110,6 +130,7 @@ def upsert_memory_record(entry: VocabularyEntry, db_path: Path = MEMORY_DB_PATH)
                 last_review_result = excluded.last_review_result
             """,
             (
+                user_id,
                 entry["word"],
                 entry["lemma"],
                 entry["meaning_in_context"],
@@ -126,7 +147,7 @@ def upsert_memory_record(entry: VocabularyEntry, db_path: Path = MEMORY_DB_PATH)
         conn.commit()
 
 
-def record_review_result(word: str, judgment: str, db_path: Path = MEMORY_DB_PATH) -> None:
+def record_review_result(word: str, judgment: str, user_id: str = DEFAULT_USER_ID, db_path: Path = MEMORY_DB_PATH) -> None:
     initialize_memory_db(db_path)
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -135,8 +156,8 @@ def record_review_result(word: str, judgment: str, db_path: Path = MEMORY_DB_PAT
             SET review_count = review_count + 1,
                 last_reviewed_at = ?,
                 last_review_result = ?
-            WHERE word = ?
+            WHERE user_id = ? AND word = ?
             """,
-            (datetime.now(UTC).isoformat(), judgment, word),
+            (datetime.now(UTC).isoformat(), judgment, user_id, word),
         )
         conn.commit()

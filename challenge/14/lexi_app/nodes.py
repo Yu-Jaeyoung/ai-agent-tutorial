@@ -275,17 +275,19 @@ Term evidence:
 
 
 def save_memory(state: LearningState, db_path: Path = MEMORY_DB_PATH) -> dict:
+    user_id = state.get("user_id", "default")
     vocabulary_entries = state.get("vocabulary_entries", [])
     if not vocabulary_entries:
-        return {"memory_records": load_memory_records(db_path)}
+        return {"memory_records": load_memory_records(user_id, db_path)}
 
     for entry in vocabulary_entries:
-        upsert_memory_record(entry, db_path=db_path)
-    return {"memory_records": load_memory_records(db_path), "error_message": None}
+        upsert_memory_record(entry, user_id=user_id, db_path=db_path)
+    return {"memory_records": load_memory_records(user_id, db_path), "error_message": None}
 
 
 def load_review_memory(state: LearningState, db_path: Path = MEMORY_DB_PATH) -> dict:
-    memory_records = load_memory_records(db_path)
+    user_id = state.get("user_id", "default")
+    memory_records = load_memory_records(user_id, db_path)
     if not memory_records:
         return {
             "memory_records": [],
@@ -416,9 +418,10 @@ def update_review_memory(state: LearningState, db_path: Path = MEMORY_DB_PATH) -
     if not review_state:
         return {"error_message": "업데이트할 review 상태가 없습니다."}
 
+    user_id = state.get("user_id", "default")
     current_word = review_state["current_word"]
     judgment = review_state["judgment"]
-    record_review_result(current_word, judgment, db_path=db_path)
+    record_review_result(current_word, judgment, user_id=user_id, db_path=db_path)
 
     remaining_queue = state.get("review_queue", [])[1:]
     review_history = state.get("review_history", []) + [
@@ -432,7 +435,7 @@ def update_review_memory(state: LearningState, db_path: Path = MEMORY_DB_PATH) -
         }
     ]
     return {
-        "memory_records": load_memory_records(db_path),
+        "memory_records": load_memory_records(user_id, db_path),
         "review_queue": remaining_queue,
         "review_history": review_history,
         "assistant_message": review_state["explanation"],

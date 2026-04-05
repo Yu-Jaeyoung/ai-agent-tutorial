@@ -212,8 +212,8 @@ def run_smoke_tests() -> None:
                 "why_it_matters": "DB 마이그레이션 검증용이다.",
                 "study_priority": "high",
             }
-            upsert_memory_record(test_entry, db_path=temp_db)
-            records = load_memory_records(db_path=temp_db)
+            upsert_memory_record(test_entry, user_id="test_user", db_path=temp_db)
+            records = load_memory_records(user_id="test_user", db_path=temp_db)
             matched = [r for r in records if r["word"] == "schema_test"]
             assert len(matched) == 1
             assert matched[0]["why_it_matters"] == "DB 마이그레이션 검증용이다."

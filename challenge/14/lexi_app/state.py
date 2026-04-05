@@ -58,6 +58,7 @@ class ReviewState(TypedDict):
 
 
 class LearningState(TypedDict):
+    user_id: str
     input_text: str
     route: RouteName | None
     candidate_words: list[str]
@@ -75,8 +76,9 @@ class LearningState(TypedDict):
     session_review_limit: int
 
 
-def make_initial_state(input_text: str = "") -> LearningState:
+def make_initial_state(input_text: str = "", user_id: str = "default") -> LearningState:
     return {
+        "user_id": user_id,
         "input_text": input_text,
         "route": None,
         "candidate_words": [],
