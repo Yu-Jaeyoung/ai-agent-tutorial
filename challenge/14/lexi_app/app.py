@@ -87,14 +87,31 @@ def logout_user() -> None:
     st.session_state.pop(USER_ID_SESSION_KEY, None)
 
 
-def ensure_app_state() -> None:
+def check_llm_connectivity() -> bool:
+    if st.session_state.get("llm_check_passed"):
+        return True
+    try:
+        from .config import get_llm
+        get_llm().invoke("Say OK")
+        st.session_state["llm_check_passed"] = True
+        return True
+    except Exception as exc:
+        st.error(f"LLM 연결에 실패했습니다. GOOGLE_API_KEY를 확인해 주세요.\n\n`{type(exc).__name__}: {exc}`")
+        return False
+
+
+def ensure_app_state() -> bool:
     if st.session_state.get(APP_READY_SESSION_KEY):
-        return
+        return True
+
+    if not check_llm_connectivity():
+        return False
 
     st.session_state[GRAPH_SESSION_KEY] = build_graph()
     st.session_state[APP_READY_SESSION_KEY] = True
     if not get_chat_messages():
         reset_session()
+    return True
 
 
 def render_user_select() -> bool:
@@ -261,8 +278,10 @@ def handle_user_input(user_text: str) -> None:
                 payload = summarize_turn_result(next_state)
                 assistant_text = format_payload(payload)
                 set_learning_state(next_state)
+        except RuntimeError as exc:
+            assistant_text = f"설정 오류가 발생했습니다: {exc}"
         except Exception as exc:
-            assistant_text = f"요청 처리 중 오류가 발생했습니다.\n\n{exc}"
+            assistant_text = f"요청 처리 중 예상치 못한 오류가 발생했습니다.\n\n`{type(exc).__name__}: {exc}`"
         finally:
             set_processing(False)
             set_pending_input(None)
@@ -277,7 +296,9 @@ def handle_user_input(user_text: str) -> None:
 def main() -> None:
     load_runtime_secrets()
     st.set_page_config(page_title="LeXi", page_icon="L")
-    ensure_app_state()
+
+    if not ensure_app_state():
+        st.stop()
 
     if not get_user_id():
         render_user_select()

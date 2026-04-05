@@ -12,7 +12,7 @@ def find_project_root(start: Path) -> Path:
     for candidate in (start, *start.parents):
         if (candidate / ".git").exists() or (candidate / "pyproject.toml").exists():
             return candidate
-    raise RuntimeError("Could not locate the project root for LeXi.")
+    return start
 
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -40,7 +40,10 @@ def get_model_name() -> str:
 def get_llm():
     load_environment()
     if not os.getenv("GOOGLE_API_KEY"):
-        raise RuntimeError("GOOGLE_API_KEY must be set in the project .env file.")
+        raise RuntimeError(
+            "GOOGLE_API_KEY가 설정되지 않았습니다. "
+            ".env 파일 또는 Streamlit Cloud의 Secrets에 GOOGLE_API_KEY를 추가해 주세요."
+        )
     return init_chat_model(
         model=get_model_name(),
         model_provider="google_genai",
