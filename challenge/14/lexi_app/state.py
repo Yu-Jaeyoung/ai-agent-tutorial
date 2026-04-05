@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 from typing_extensions import NotRequired, TypedDict
 
 
-RouteName = Literal["paragraph", "single_term", "review", "reentry", "invalid"]
+RouteName = Literal["paragraph", "single_term", "existing_term", "review", "reentry", "invalid"]
 ReviewResult = Literal["correct", "wrong", "unknown"]
 StudyPriority = Literal["high", "medium", "low"]
 

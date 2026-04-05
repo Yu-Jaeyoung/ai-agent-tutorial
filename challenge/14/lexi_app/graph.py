@@ -21,6 +21,7 @@ from .nodes import (
     route_after_review_question,
     route_from_request,
     save_memory,
+    show_existing_entry,
     update_review_memory,
 )
 from .state import LearningState
@@ -51,6 +52,7 @@ def build_graph():
         destinations=("save_memory",),
     )
     graph_builder.add_node("save_memory", save_memory)
+    graph_builder.add_node("show_existing_entry", show_existing_entry)
     graph_builder.add_node("load_review_memory", load_review_memory)
     graph_builder.add_node("present_review_question", present_review_question)
     graph_builder.add_node("judge_review_answer", judge_review_answer)
@@ -66,6 +68,7 @@ def build_graph():
         {
             "paragraph": "extract_candidates",
             "single_term": "normalize_term_request",
+            "existing_term": "show_existing_entry",
             "review": "load_review_memory",
             "reentry": "ask_for_reentry",
             "invalid": "reject_out_of_scope",
@@ -76,6 +79,7 @@ def build_graph():
     graph_builder.add_edge("enrich_term_worker", "build_vocabulary_entries")
     graph_builder.add_edge("build_vocabulary_entries", "save_memory")
     graph_builder.add_edge("save_memory", END)
+    graph_builder.add_edge("show_existing_entry", END)
     graph_builder.add_edge("load_review_memory", "present_review_question")
     graph_builder.add_conditional_edges(
         "present_review_question",

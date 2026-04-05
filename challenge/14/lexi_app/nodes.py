@@ -154,6 +154,9 @@ def analyze_request(state: LearningState) -> dict:
         return {"route": "invalid", "assistant_message": message, "error_message": message}
 
     if looks_like_single_term(text):
+        existing = _find_existing_entries([text], state.get("memory_records", []))
+        if existing:
+            return {"route": "existing_term", "assistant_message": None, "error_message": None}
         return {"route": "single_term", "assistant_message": None, "error_message": None}
 
     if looks_like_english_paragraph(text):
@@ -593,6 +596,39 @@ def ask_for_reentry(state: LearningState) -> dict:
 def reject_out_of_scope(state: LearningState) -> dict:
     message = state.get("error_message") or "LeXi는 영어 기술 문서 학습과 복습 요청만 처리합니다."
     return {"assistant_message": message, "error_message": message}
+
+
+def show_existing_entry(state: LearningState) -> dict:
+    text = state["input_text"].strip()
+    memory_records = state.get("memory_records", [])
+    existing = _find_existing_entries([text], memory_records)
+
+    if not existing:
+        return {"error_message": "단어장에서 해당 단어를 찾지 못했습니다."}
+
+    record = next(iter(existing.values()))
+    entry = {
+        "word": record["word"],
+        "lemma": record.get("lemma", record["word"]),
+        "meaning_in_context": record["meaning_in_context"],
+        "source_sentence": record["source_sentence"],
+        "context_note": record.get("context_note", ""),
+        "why_it_matters": record.get("why_it_matters", ""),
+        "study_priority": record.get("study_priority", "medium"),
+    }
+    review_count = record.get("review_count", 0)
+    last_result = record.get("last_review_result")
+
+    review_info = f"복습 {review_count}회"
+    if last_result:
+        review_info += f", 최근 결과: {'정답' if last_result == 'correct' else '오답'}"
+
+    message = f"이 단어는 이미 단어장에 저장되어 있어요. ({review_info})"
+    return {
+        "vocabulary_entries": [entry],
+        "assistant_message": message,
+        "error_message": None,
+    }
 
 
 def route_from_request(state: LearningState) -> str:

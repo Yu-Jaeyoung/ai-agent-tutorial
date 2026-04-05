@@ -87,6 +87,7 @@ def build_test_graph(temp_db: Path):
     graph_builder.add_node("enrich_term_worker", nodes.enrich_term_worker, destinations=("build_vocabulary_entries",))
     graph_builder.add_node("build_vocabulary_entries", nodes.build_vocabulary_entries, destinations=("save_memory",))
     graph_builder.add_node("save_memory", save_memory)
+    graph_builder.add_node("show_existing_entry", nodes.show_existing_entry)
     graph_builder.add_node("load_review_memory", load_review_memory)
     graph_builder.add_node("present_review_question", nodes.present_review_question)
     graph_builder.add_node("judge_review_answer", nodes.judge_review_answer)
@@ -102,6 +103,7 @@ def build_test_graph(temp_db: Path):
         {
             "paragraph": "extract_candidates",
             "single_term": "normalize_term_request",
+            "existing_term": "show_existing_entry",
             "review": "load_review_memory",
             "reentry": "ask_for_reentry",
             "invalid": "reject_out_of_scope",
@@ -112,6 +114,7 @@ def build_test_graph(temp_db: Path):
     graph_builder.add_edge("enrich_term_worker", "build_vocabulary_entries")
     graph_builder.add_edge("build_vocabulary_entries", "save_memory")
     graph_builder.add_edge("save_memory", END)
+    graph_builder.add_edge("show_existing_entry", END)
     graph_builder.add_edge("load_review_memory", "present_review_question")
     graph_builder.add_conditional_edges(
         "present_review_question",
@@ -173,6 +176,14 @@ def run_smoke_tests() -> None:
             assert single_term_result["route"] == "single_term"
             assert single_term_result["vocabulary_entries"][0]["word"] == "backward compatibility"
 
+            # "latency" was saved from paragraph test — should route to existing_term
+            existing_state = make_initial_state("latency")
+            existing_state["memory_records"] = paragraph_result["memory_records"]
+            existing_result = graph.invoke(existing_state)
+            assert existing_result["route"] == "existing_term"
+            assert existing_result["vocabulary_entries"][0]["word"] == "latency"
+            assert "이미 단어장에 저장" in existing_result["assistant_message"]
+
             review_prompt = graph.invoke(make_initial_state("review"))
             assert review_prompt["route"] == "review"
             assert review_prompt["review_state"]
@@ -224,6 +235,7 @@ def run_smoke_tests() -> None:
             print("- invalid input")
             print("- paragraph learning")
             print("- single-term learning")
+            print("- existing-term lookup")
             print("- review start")
             print("- review correct answer")
             print("- review wrong answer")
