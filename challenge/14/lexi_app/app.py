@@ -239,14 +239,18 @@ def render_sidebar() -> None:
 
 
 def format_entry(entry: VocabularyEntry, index: int) -> str:
-    return (
-        f"{index}. **{entry['word']}** (`{entry['lemma']}`)\n"
-        f"- 뜻: {entry['meaning_in_context']}\n"
-        f"- 문장: {entry['source_sentence']}\n"
-        f"- 설명: {entry['context_note']}\n"
-        f"- 왜 중요한가: {entry['why_it_matters']}\n"
-        f"- 우선순위: {entry['study_priority']}"
-    )
+    lines = [
+        f"{index}. **{entry['word']}** (`{entry['lemma']}`)",
+        f"- 뜻: {entry['meaning_in_context']}",
+        f"- 문장: {entry['source_sentence']}",
+        f"- 설명: {entry['context_note']}",
+        f"- 왜 중요한가: {entry['why_it_matters']}",
+        f"- 우선순위: {entry['study_priority']}",
+    ]
+    previous = entry.get("previous_context")
+    if previous:
+        lines.append(f"- **단어장 이력**: {previous}")
+    return "\n".join(lines)
 
 
 def format_learning_message(payload: AssistantTurnPayload) -> str:

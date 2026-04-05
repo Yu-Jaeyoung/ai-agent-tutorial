@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import timezone
 from typing import Annotated, Literal
 
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 
 RouteName = Literal["paragraph", "single_term", "review", "reentry", "invalid"]
@@ -27,6 +27,7 @@ class VocabularyEntry(TypedDict):
     context_note: str
     why_it_matters: str
     study_priority: StudyPriority
+    previous_context: NotRequired[str]
 
 
 class MemoryRecord(TypedDict):

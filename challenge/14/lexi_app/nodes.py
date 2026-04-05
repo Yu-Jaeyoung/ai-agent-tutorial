@@ -255,12 +255,43 @@ def enrich_term(state: LearningState) -> dict:
     return {"term_evidence": term_evidence, "error_message": None}
 
 
+def _find_existing_entries(terms: list[str], memory_records: list[MemoryRecord]) -> dict[str, MemoryRecord]:
+    memory_by_word: dict[str, MemoryRecord] = {}
+    for record in memory_records:
+        memory_by_word[record["word"].lower()] = record
+        memory_by_word[record.get("lemma", "").lower()] = record
+
+    found: dict[str, MemoryRecord] = {}
+    for term in terms:
+        key = term.strip().lower()
+        if key in memory_by_word:
+            found[term] = memory_by_word[key]
+    return found
+
+
+def _format_previous_context(existing: dict[str, MemoryRecord]) -> str:
+    if not existing:
+        return ""
+    lines = ["Previously learned terms in user's vocabulary:"]
+    for term, record in existing.items():
+        lines.append(
+            f"- {term}: previously meant \"{record['meaning_in_context']}\" "
+            f"in sentence \"{record['source_sentence']}\""
+            f" (reviewed {record.get('review_count', 0)} times)"
+        )
+    return "\n".join(lines)
+
+
 def build_vocabulary_entries(state: LearningState) -> dict:
     text = state["input_text"].strip()
     terms_to_study = state.get("terms_to_study", [])
     term_evidence = state.get("term_evidence", {})
+    memory_records = state.get("memory_records", [])
     if not text or not terms_to_study:
         return {"vocabulary_entries": []}
+
+    existing_entries = _find_existing_entries(terms_to_study, memory_records)
+    previous_context = _format_previous_context(existing_entries)
 
     evidence_blocks: list[str] = []
     for term in terms_to_study:
@@ -269,6 +300,17 @@ def build_vocabulary_entries(state: LearningState) -> dict:
         evidence_blocks.append(
             f"Term: {term}\nSource sentences:\n- " + "\n- ".join(source_sentences)
         )
+
+    previous_context_instruction = ""
+    if previous_context:
+        previous_context_instruction = f"""
+
+{previous_context}
+
+For terms that appear above, write the context_note comparing the NEW context with the PREVIOUS meaning.
+Example: "이전에는 '지연 시간'이라는 의미로 학습했는데, 이번 문맥에서는 네트워크 관점의 지연을 강조한다."
+If the meaning is the same, note that it reinforces the previous learning.
+"""
 
     prompt = f"""
 You are building study cards for a Korean developer reading English technical documents.
@@ -288,9 +330,19 @@ Original text:
 
 Term evidence:
 {chr(10).join(evidence_blocks)}
-""".strip()
+{previous_context_instruction}""".strip()
     result = get_entry_llm().invoke(prompt)
     vocabulary_entries = [entry.model_dump() for entry in result.vocabulary_entries]
+    for entry in vocabulary_entries:
+        key = entry["word"].lower()
+        lemma_key = entry.get("lemma", "").lower()
+        if key in {t.lower() for t in existing_entries} or lemma_key in {t.lower() for t in existing_entries}:
+            matched = existing_entries.get(entry["word"], existing_entries.get(entry.get("lemma", ""), None))
+            if matched:
+                entry["previous_context"] = (
+                    f"이전 학습: \"{matched['meaning_in_context']}\" "
+                    f"(문장: {matched['source_sentence']})"
+                )
     return {"vocabulary_entries": vocabulary_entries, "error_message": None}
 
 

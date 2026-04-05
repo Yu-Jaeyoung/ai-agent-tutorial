@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from .graph import build_graph as compile_graph
+from .memory import load_memory_records
 from .nodes import is_explicit_review_request
 from .state import LearningState, ReviewState, VocabularyEntry, make_initial_state
 
@@ -27,11 +28,12 @@ def build_graph():
 
 def prepare_turn_state(previous_state: LearningState | None, user_text: str, user_id: str = "default") -> LearningState:
     next_state = make_initial_state(user_text, user_id=user_id)
+    next_state["memory_records"] = load_memory_records(user_id)
+
     if not previous_state:
         return next_state
 
     next_state["session_review_limit"] = previous_state.get("session_review_limit", 3)
-    next_state["memory_records"] = previous_state.get("memory_records", [])
 
     has_active_review = bool(previous_state.get("review_state"))
     explicit_review_request = is_explicit_review_request(user_text)
