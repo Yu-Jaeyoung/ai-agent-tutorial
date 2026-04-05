@@ -174,25 +174,30 @@ def render_user_select() -> None:
     st.title("LeXi")
     st.caption("영어 기술 문장을 학습 카드로 정리하고, 저장한 단어를 복습하는 Streamlit 학습 에이전트")
 
-    existing_users = list_users()
+    existing_users = set(list_users())
 
-    tab_existing, tab_new = st.tabs(["기존 사용자", "새 사용자"])
+    tab_login, tab_register = st.tabs(["로그인", "새 사용자 등록"])
 
-    with tab_existing:
-        if existing_users:
-            selected = st.selectbox("사용자를 선택해 주세요.", existing_users, index=None, placeholder="선택...")
-            if st.button("시작하기", key="btn_existing", disabled=not selected, use_container_width=True):
-                set_user_id(selected)
+    with tab_login:
+        login_name = st.text_input("사용자 이름을 입력해 주세요.", key="login_name", placeholder="예: jaeyoung")
+        if st.button("로그인", key="btn_login", disabled=not login_name, use_container_width=True):
+            name = login_name.strip()
+            if name and name in existing_users:
+                set_user_id(name)
                 reset_session()
                 st.rerun()
-        else:
-            st.info("아직 등록된 사용자가 없습니다. 새 사용자로 시작해 주세요.")
+            else:
+                st.error("존재하지 않는 사용자입니다.")
 
-    with tab_new:
-        new_name = st.text_input("사용자 이름을 입력해 주세요.", placeholder="예: jaeyoung")
-        if st.button("등록 후 시작", key="btn_new", disabled=not new_name, use_container_width=True):
+    with tab_register:
+        new_name = st.text_input("사용자 이름을 입력해 주세요.", key="register_name", placeholder="예: jaeyoung")
+        if st.button("등록 후 시작", key="btn_register", disabled=not new_name, use_container_width=True):
             name = new_name.strip()
-            if name:
+            if not name:
+                return
+            if name in existing_users:
+                st.error("이미 존재하는 사용자입니다.")
+            else:
                 set_user_id(name)
                 reset_session()
                 st.rerun()
