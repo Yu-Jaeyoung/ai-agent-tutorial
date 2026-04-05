@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import random
+import threading
+import time
 
 import streamlit as st
 
 from .memory import list_users, load_memory_records
 from .service import AssistantTurnPayload, build_graph, run_turn, summarize_turn_result
-from .state import LearningState, VocabularyEntry
+from .state import LearningState, MemoryRecord, VocabularyEntry
 
 
 CHAT_MESSAGES_SESSION_KEY = "chat_messages"
@@ -17,6 +20,7 @@ PROCESSING_SESSION_KEY = "is_processing"
 PENDING_INPUT_SESSION_KEY = "pending_input"
 USER_ID_SESSION_KEY = "user_id"
 MAX_CHAT_MESSAGES = 100
+LOADING_TIP_INTERVAL = 3.0
 WELCOME_MESSAGE = (
     "LeXi에 오신 것을 환영합니다.\n\n"
     "**사용 방법:**\n"
@@ -25,6 +29,50 @@ WELCOME_MESSAGE = (
     "3. **`review` 입력** - 저장된 단어를 복습합니다.\n\n"
     "아래 입력창에 영어 기술 문장이나 용어를 입력해 시작하세요."
 )
+
+GENERAL_TIPS = [
+    "기술 문서를 읽을 때 모르는 단어를 바로 입력하면 학습 효과가 높아요.",
+    "같은 단어도 문맥에 따라 뜻이 달라질 수 있어요. 다양한 문장으로 학습해 보세요.",
+    "복습은 짧은 간격으로 자주 하는 것이 장기 기억에 효과적이에요.",
+    "하루에 3-5개 단어를 꾸준히 학습하면 한 달에 100개 이상의 단어를 익힐 수 있어요.",
+    "기술 용어는 원래 의미(어원)를 알면 파생 용어도 쉽게 이해할 수 있어요.",
+    "영어 기술 블로그를 읽으면서 모르는 문장을 LeXi에 넣어보세요.",
+    "학습 카드의 '왜 중요한가' 항목을 읽으면 실제 활용 맥락을 파악하는 데 도움이 돼요.",
+    "review를 반복하면 틀린 단어가 우선 출제돼요. 약한 부분을 집중 보강할 수 있어요.",
+]
+
+TECH_TERM_TIPS = [
+    ("Latency", "요청을 보낸 뒤 응답을 받기까지 걸리는 시간. 네트워크와 시스템 성능의 핵심 지표예요."),
+    ("Throughput", "단위 시간당 처리할 수 있는 작업의 양. Latency와 함께 성능을 측정하는 양대 지표예요."),
+    ("Idempotent", "같은 요청을 여러 번 보내도 결과가 동일한 성질. API 설계에서 중요한 개념이에요."),
+    ("Serialization", "데이터를 저장하거나 전송할 수 있는 형식으로 변환하는 과정이에요."),
+    ("Middleware", "요청과 응답 사이에서 공통 처리를 담당하는 소프트웨어 계층이에요."),
+    ("Concurrency", "여러 작업이 동시에 진행되는 것처럼 보이게 하는 프로그래밍 기법이에요."),
+    ("Pagination", "대량의 데이터를 페이지 단위로 나누어 전달하는 방식이에요."),
+    ("Rate Limiting", "일정 시간 내 요청 수를 제한하여 서비스를 보호하는 기법이에요."),
+    ("Eventual Consistency", "분산 시스템에서 시간이 지나면 모든 노드가 같은 상태에 도달하는 모델이에요."),
+    ("Backpressure", "처리 속도를 초과하는 데이터 흐름을 조절하는 메커니즘이에요."),
+]
+
+
+def _build_loading_messages(memory_records: list[MemoryRecord]) -> list[str]:
+    messages: list[str] = []
+
+    for tip in GENERAL_TIPS:
+        messages.append(tip)
+
+    for term, desc in TECH_TERM_TIPS:
+        messages.append(f"**오늘의 용어: {term}** — {desc}")
+
+    if memory_records:
+        sampled = random.sample(memory_records, min(5, len(memory_records)))
+        for record in sampled:
+            messages.append(
+                f"**단어장 복습: {record['word']}** — {record['meaning_in_context']}"
+            )
+
+    random.shuffle(messages)
+    return messages
 
 
 def load_runtime_secrets() -> None:
@@ -277,20 +325,53 @@ def render_chat_history() -> None:
 def handle_user_input(user_text: str) -> None:
     user_id = get_user_id() or "default"
     previous_state = get_learning_state()
+    memory_records = load_memory_records(user_id)
+    loading_messages = _build_loading_messages(memory_records)
+
     append_chat_message("user", user_text)
     with st.chat_message("user"):
         st.markdown(user_text)
 
     with st.chat_message("assistant"):
         label = get_processing_label(user_text, previous_state)
+        tip_placeholder = st.empty()
+        status_placeholder = st.empty()
+
+        result_box: dict = {}
+        done_event = threading.Event()
+
+        def _run():
+            try:
+                result_box["state"] = run_turn(previous_state, user_text, user_id=user_id)
+            except Exception as exc:
+                result_box["error"] = exc
+            finally:
+                done_event.set()
+
+        worker = threading.Thread(target=_run, daemon=True)
+        worker.start()
+
+        tip_idx = 0
+        status_placeholder.info(f"**{label}**")
+        while not done_event.is_set():
+            if loading_messages:
+                tip_placeholder.markdown(
+                    f"*{loading_messages[tip_idx % len(loading_messages)]}*"
+                )
+                tip_idx += 1
+            done_event.wait(timeout=LOADING_TIP_INTERVAL)
+
+        worker.join()
+        tip_placeholder.empty()
+        status_placeholder.empty()
+
         try:
-            with st.status(label, expanded=False) as status:
-                status.update(label=label, state="running")
-                next_state = run_turn(previous_state, user_text, user_id=user_id)
-                payload = summarize_turn_result(next_state)
-                assistant_text = format_payload(payload)
-                set_learning_state(next_state)
-                status.update(label="완료", state="complete")
+            if "error" in result_box:
+                raise result_box["error"]
+            next_state = result_box["state"]
+            payload = summarize_turn_result(next_state)
+            assistant_text = format_payload(payload)
+            set_learning_state(next_state)
         except RuntimeError as exc:
             assistant_text = f"설정 오류가 발생했습니다: {exc}"
         except Exception as exc:
