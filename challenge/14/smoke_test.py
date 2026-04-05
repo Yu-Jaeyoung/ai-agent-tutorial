@@ -6,8 +6,9 @@ from pathlib import Path
 from langgraph.graph import END, START, StateGraph
 
 from lexi_app import nodes
+from lexi_app.memory import initialize_memory_db, load_memory_records, upsert_memory_record
 from lexi_app.schemas import CandidateWords, NormalizedTerms, ReviewJudgment, VocabularyEntries, VocabularyEntryModel
-from lexi_app.state import LearningState, make_initial_state
+from lexi_app.state import LearningState, VocabularyEntry, make_initial_state
 
 
 class FakeCandidateLLM:
@@ -181,13 +182,42 @@ def run_smoke_tests() -> None:
             correct_answer_state = {**review_prompt, "input_text": expected_meaning}
             correct_result = graph.invoke(correct_answer_state)
             assert correct_result["review_judge_method"] == "rule"
-            assert "정답입니다." in correct_result["assistant_message"]
+            correct_history = correct_result.get("review_history", [])
+            assert any("정답입니다." in h.get("explanation", "") for h in correct_history)
 
             review_prompt_again = graph.invoke(make_initial_state("review"))
             wrong_answer_state = {**review_prompt_again, "input_text": "분산 시스템"}
             wrong_result = graph.invoke(wrong_answer_state)
             assert wrong_result["review_judge_method"] == "llm"
-            assert "정답은" in wrong_result["assistant_message"]
+            wrong_history = wrong_result.get("review_history", [])
+            assert any("정답은" in h.get("explanation", "") for h in wrong_history)
+
+            # --- route_after_next_review routing tests ---
+            state_with_queue = {**make_initial_state(""), "review_queue": ["word1"], "continue_review": None}
+            assert nodes.route_after_next_review(state_with_queue) == "present"
+
+            state_finished = {**make_initial_state(""), "review_queue": [], "continue_review": False}
+            assert nodes.route_after_next_review(state_finished) == "end"
+
+            state_limit_reached = {**make_initial_state(""), "review_queue": ["word1"], "continue_review": False}
+            assert nodes.route_after_next_review(state_limit_reached) == "end"
+
+            # --- DB schema round-trip test (why_it_matters, study_priority) ---
+            test_entry: VocabularyEntry = {
+                "word": "schema_test",
+                "lemma": "schema_test",
+                "meaning_in_context": "스키마 테스트",
+                "source_sentence": "This is a schema test.",
+                "context_note": "테스트 전용 항목이다.",
+                "why_it_matters": "DB 마이그레이션 검증용이다.",
+                "study_priority": "high",
+            }
+            upsert_memory_record(test_entry, db_path=temp_db)
+            records = load_memory_records(db_path=temp_db)
+            matched = [r for r in records if r["word"] == "schema_test"]
+            assert len(matched) == 1
+            assert matched[0]["why_it_matters"] == "DB 마이그레이션 검증용이다."
+            assert matched[0]["study_priority"] == "high"
 
             print("Smoke tests passed:")
             print("- empty input")
@@ -197,6 +227,8 @@ def run_smoke_tests() -> None:
             print("- review start")
             print("- review correct answer")
             print("- review wrong answer")
+            print("- route_after_next_review routing")
+            print("- DB schema round-trip (why_it_matters, study_priority)")
     finally:
         nodes.get_candidate_llm = candidate_llm_backup
         nodes.get_term_normalizer_llm = term_normalizer_llm_backup
