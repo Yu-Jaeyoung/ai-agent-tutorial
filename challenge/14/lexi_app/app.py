@@ -179,23 +179,29 @@ def render_user_select() -> None:
     tab_login, tab_register = st.tabs(["로그인", "새 사용자 등록"])
 
     with tab_login:
-        login_name = st.text_input("사용자 이름을 입력해 주세요.", key="login_name", placeholder="예: jaeyoung")
-        if st.button("로그인", key="btn_login", disabled=not login_name, use_container_width=True):
+        with st.form("login_form"):
+            login_name = st.text_input("사용자 이름을 입력해 주세요.", placeholder="예: jaeyoung")
+            submitted = st.form_submit_button("로그인", use_container_width=True)
+        if submitted:
             name = login_name.strip()
-            if name and name in existing_users:
+            if not name:
+                st.error("사용자 이름을 입력해 주세요.")
+            elif name not in existing_users:
+                st.error("존재하지 않는 사용자입니다.")
+            else:
                 set_user_id(name)
                 reset_session()
                 st.rerun()
-            else:
-                st.error("존재하지 않는 사용자입니다.")
 
     with tab_register:
-        new_name = st.text_input("사용자 이름을 입력해 주세요.", key="register_name", placeholder="예: jaeyoung")
-        if st.button("등록 후 시작", key="btn_register", disabled=not new_name, use_container_width=True):
+        with st.form("register_form"):
+            new_name = st.text_input("사용자 이름을 입력해 주세요.", placeholder="예: jaeyoung")
+            submitted = st.form_submit_button("등록 후 시작", use_container_width=True)
+        if submitted:
             name = new_name.strip()
             if not name:
-                return
-            if name in existing_users:
+                st.error("사용자 이름을 입력해 주세요.")
+            elif name in existing_users:
                 st.error("이미 존재하는 사용자입니다.")
             else:
                 set_user_id(name)
