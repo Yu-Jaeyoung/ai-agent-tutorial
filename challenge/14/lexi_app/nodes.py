@@ -29,6 +29,13 @@ REVIEW_KEYWORDS = {
     "다시 보기",
     "단어 복습",
 }
+CASUAL_PATTERNS = re.compile(
+    r"^(hi|hello|hey|good morning|good afternoon|good evening|bye|thanks|thank you|"
+    r"how are you|what'?s up|tell me|who are you|what are you|help me|please help|"
+    r"can you|do you|are you|what is your|what's your|"
+    r"good night|see you|nice to meet|yo|sup)\b",
+    re.IGNORECASE,
+)
 ENGLISH_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
 HANGUL_RE = re.compile(r"[가-힣]")
 
@@ -139,7 +146,11 @@ def analyze_request(state: LearningState) -> dict:
         return {"route": "review", "assistant_message": None, "error_message": None}
 
     if contains_hangul(text):
-        message = "LeXi는 영어 기술 문서 학습과 복습 요청만 처리합니다. 영어 기술 문장, 영어 용어, 또는 복습 요청을 입력해 주세요."
+        message = "LeXi는 영어 기술 문서 학습과 복습 요청만 처리합니다. 영어 기술 문장, 영어 용어, 또는 `review`를 입력해 주세요."
+        return {"route": "invalid", "assistant_message": message, "error_message": message}
+
+    if CASUAL_PATTERNS.search(text):
+        message = "LeXi는 일상 대화가 아닌 영어 기술 용어 학습 전용 에이전트입니다. 영어 기술 문장, 영어 용어, 또는 `review`를 입력해 주세요."
         return {"route": "invalid", "assistant_message": message, "error_message": message}
 
     if looks_like_single_term(text):
@@ -149,13 +160,23 @@ def analyze_request(state: LearningState) -> dict:
         return {"route": "paragraph", "assistant_message": None, "error_message": None}
 
     if not english_tokens(text):
-        message = "LeXi는 영어 기술 문서 학습과 복습 요청만 처리합니다. 영어 기술 문장, 영어 용어, 또는 복습 요청을 입력해 주세요."
+        message = "LeXi는 영어 기술 문서 학습과 복습 요청만 처리합니다. 영어 기술 문장, 영어 용어, 또는 `review`를 입력해 주세요."
         return {"route": "invalid", "assistant_message": message, "error_message": message}
+
+    invalid_message = "LeXi는 영어 기술 문서 학습과 복습 요청만 처리합니다. 영어 기술 문장, 영어 용어, 또는 `review`를 입력해 주세요."
 
     prompt = f"""
 You are classifying an English technical vocabulary study request.
 Choose one route from: paragraph, single_term, review, reentry, invalid.
-Return only the structured output.
+
+Rules:
+- "paragraph": English text containing technical content with 6+ words and punctuation.
+- "single_term": A short English technical term (1-5 words) worth studying.
+- "review": An explicit request to review saved vocabulary.
+- "reentry": Input that seems related to learning but is unclear.
+- "invalid": Casual conversation, greetings, questions, commands, or anything NOT related to English technical vocabulary learning.
+
+IMPORTANT: If the input is casual English (greetings, small talk, general questions, jokes, commands), always choose "invalid".
 
 Input:
 {text}
@@ -163,11 +184,10 @@ Input:
     result = get_route_llm().invoke(prompt)
     route = result.route
     if route == "reentry":
-        message = "입력을 다시 확인해 주세요. 영어 기술 문장, 영어 용어, 또는 복습 요청을 입력해 주세요."
+        message = "입력을 다시 확인해 주세요. 영어 기술 문장, 영어 용어, 또는 `review`를 입력해 주세요."
         return {"route": route, "assistant_message": message, "error_message": message}
     if route == "invalid":
-        message = "LeXi는 영어 기술 문서 학습과 복습 요청만 처리합니다. 영어 기술 문장, 영어 용어, 또는 복습 요청을 입력해 주세요."
-        return {"route": route, "assistant_message": message, "error_message": message}
+        return {"route": route, "assistant_message": invalid_message, "error_message": invalid_message}
     return {"route": route, "assistant_message": None, "error_message": None}
 
 
