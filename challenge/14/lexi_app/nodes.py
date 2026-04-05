@@ -534,4 +534,8 @@ def route_after_review_question(state: LearningState) -> str:
 
 
 def route_after_next_review(state: LearningState) -> str:
+    if state.get("continue_review") is False:
+        return "end"
+    if state.get("review_queue"):
+        return "present"
     return "end"

@@ -35,6 +35,8 @@ class MemoryRecord(TypedDict):
     meaning_in_context: str
     source_sentence: str
     context_note: str
+    why_it_matters: str
+    study_priority: str
     created_at: str
     review_count: int
     last_reviewed_at: str | None

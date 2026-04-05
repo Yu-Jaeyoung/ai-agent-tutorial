@@ -19,6 +19,8 @@ def initialize_memory_db(db_path: Path = MEMORY_DB_PATH) -> None:
                 meaning_in_context TEXT NOT NULL,
                 source_sentence TEXT NOT NULL,
                 context_note TEXT NOT NULL,
+                why_it_matters TEXT NOT NULL DEFAULT '',
+                study_priority TEXT NOT NULL DEFAULT 'medium',
                 created_at TEXT NOT NULL,
                 review_count INTEGER NOT NULL DEFAULT 0,
                 last_reviewed_at TEXT,
@@ -26,6 +28,17 @@ def initialize_memory_db(db_path: Path = MEMORY_DB_PATH) -> None:
             )
             """
         )
+        conn.commit()
+    _migrate_schema(db_path)
+
+
+def _migrate_schema(db_path: Path) -> None:
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(study_memory)").fetchall()}
+        if "why_it_matters" not in columns:
+            conn.execute("ALTER TABLE study_memory ADD COLUMN why_it_matters TEXT NOT NULL DEFAULT ''")
+        if "study_priority" not in columns:
+            conn.execute("ALTER TABLE study_memory ADD COLUMN study_priority TEXT NOT NULL DEFAULT 'medium'")
         conn.commit()
 
 
@@ -43,6 +56,8 @@ def load_memory_records(db_path: Path = MEMORY_DB_PATH) -> list[MemoryRecord]:
                 meaning_in_context,
                 source_sentence,
                 context_note,
+                why_it_matters,
+                study_priority,
                 created_at,
                 review_count,
                 last_reviewed_at,
@@ -75,16 +90,20 @@ def upsert_memory_record(entry: VocabularyEntry, db_path: Path = MEMORY_DB_PATH)
                 meaning_in_context,
                 source_sentence,
                 context_note,
+                why_it_matters,
+                study_priority,
                 created_at,
                 review_count,
                 last_reviewed_at,
                 last_review_result
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(word) DO UPDATE SET
                 lemma = excluded.lemma,
                 meaning_in_context = excluded.meaning_in_context,
                 source_sentence = excluded.source_sentence,
                 context_note = excluded.context_note,
+                why_it_matters = excluded.why_it_matters,
+                study_priority = excluded.study_priority,
                 created_at = excluded.created_at,
                 review_count = excluded.review_count,
                 last_reviewed_at = excluded.last_reviewed_at,
@@ -96,6 +115,8 @@ def upsert_memory_record(entry: VocabularyEntry, db_path: Path = MEMORY_DB_PATH)
                 entry["meaning_in_context"],
                 entry["source_sentence"],
                 entry["context_note"],
+                entry.get("why_it_matters", ""),
+                entry.get("study_priority", "medium"),
                 created_at,
                 review_count,
                 last_reviewed_at,
