@@ -291,7 +291,18 @@ def format_review_feedback(payload: AssistantTurnPayload) -> str:
         if explanation:
             lines.append(explanation)
 
-    if payload.assistant_text:
+    has_next_question = (
+        payload.review_state
+        and not payload.review_state.get("user_answer")
+    )
+    if has_next_question:
+        lines.append("---")
+        lines.append("다음 복습 문제를 준비했어요.")
+        lines.append(f"**단어**: `{payload.review_state['current_word']}`")
+        lines.append("**문장**:")
+        lines.append(f"> {payload.review_state['current_source_sentence']}")
+        lines.append("이 문맥에서 이 단어의 한국어 뜻을 입력해 주세요.")
+    elif payload.assistant_text:
         lines.append(payload.assistant_text)
 
     return "\n\n".join(lines)
