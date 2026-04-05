@@ -16,9 +16,14 @@ APP_READY_SESSION_KEY = "app_ready"
 PROCESSING_SESSION_KEY = "is_processing"
 PENDING_INPUT_SESSION_KEY = "pending_input"
 USER_ID_SESSION_KEY = "user_id"
+MAX_CHAT_MESSAGES = 100
 WELCOME_MESSAGE = (
-    "영어 기술 문장, 영어 기술 용어, 또는 `review`를 입력해 주세요.\n\n"
-    "LeXi가 문맥 기반 단어 카드 생성과 저장 기반 복습을 도와드립니다."
+    "LeXi에 오신 것을 환영합니다.\n\n"
+    "**사용 방법:**\n"
+    "1. **영어 기술 문장 입력** - 문장에서 핵심 용어를 추출해 학습 카드를 만듭니다.\n"
+    "2. **영어 기술 용어 입력** - 해당 용어의 문맥 기반 학습 카드를 생성합니다.\n"
+    "3. **`review` 입력** - 저장된 단어를 복습합니다.\n\n"
+    "아래 입력창에 영어 기술 문장이나 용어를 입력해 시작하세요."
 )
 
 
@@ -48,7 +53,10 @@ def get_chat_messages() -> list[dict[str, str]]:
 
 
 def append_chat_message(role: str, content: str) -> None:
-    get_chat_messages().append({"role": role, "content": content})
+    messages = get_chat_messages()
+    messages.append({"role": role, "content": content})
+    if len(messages) > MAX_CHAT_MESSAGES:
+        st.session_state[CHAT_MESSAGES_SESSION_KEY] = [messages[0]] + messages[-(MAX_CHAT_MESSAGES - 1):]
 
 
 def set_learning_state(state: LearningState | None) -> None:
@@ -114,7 +122,7 @@ def ensure_app_state() -> bool:
     return True
 
 
-def render_user_select() -> bool:
+def render_user_select() -> None:
     st.title("LeXi")
     st.caption("영어 기술 문장을 학습 카드로 정리하고, 저장한 단어를 복습하는 Streamlit 학습 에이전트")
 
@@ -141,8 +149,6 @@ def render_user_select() -> bool:
                 reset_session()
                 st.rerun()
 
-    return False
-
 
 def render_sidebar() -> None:
     user_id = get_user_id()
@@ -152,12 +158,20 @@ def render_sidebar() -> None:
     review_queue_length = len(state.get("review_queue", [])) if state else 0
 
     with st.sidebar:
-        st.header("Session")
+        st.header("LeXi 대시보드")
         st.caption(f"사용자: **{user_id}**")
-        st.metric("Saved memory", len(memory_records))
-        st.metric("Review active", "Yes" if review_state else "No")
-        st.metric("Review queue", review_queue_length)
-        if st.button("Reset Session", use_container_width=True):
+        st.metric("저장된 단어", len(memory_records))
+        st.metric("복습 진행 중", "예" if review_state else "아니오")
+        st.metric("남은 복습 문제", review_queue_length)
+
+        if memory_records:
+            with st.expander("단어장 보기", expanded=False):
+                for record in memory_records[:10]:
+                    st.markdown(f"- **{record['word']}**: {record['meaning_in_context']}")
+                if len(memory_records) > 10:
+                    st.caption(f"외 {len(memory_records) - 10}개")
+
+        if st.button("세션 초기화", use_container_width=True):
             reset_session()
             st.rerun()
         if st.button("사용자 전환", use_container_width=True):
@@ -245,13 +259,13 @@ def format_payload(payload: AssistantTurnPayload) -> str:
     return payload.assistant_text or "처리 결과가 없습니다."
 
 
-def get_processing_message(user_text: str, previous_state: LearningState | None) -> str:
+def get_processing_label(user_text: str, previous_state: LearningState | None) -> str:
     normalized = user_text.strip().lower()
     if normalized == "review" or "review" in normalized or "복습" in user_text or "퀴즈" in user_text:
-        return "복습할 단어와 문제를 준비하고 있어요..."
+        return "복습 준비 중..."
     if previous_state and previous_state.get("review_state"):
-        return "답변을 확인하고 복습 결과를 정리하고 있어요..."
-    return "문장과 기술 용어를 분석하고 학습 카드를 만들고 있어요..."
+        return "답변 확인 중..."
+    return "학습 카드 생성 중..."
 
 
 def render_chat_history() -> None:
@@ -268,16 +282,15 @@ def handle_user_input(user_text: str) -> None:
         st.markdown(user_text)
 
     with st.chat_message("assistant"):
-        status_placeholder = st.empty()
-        processing_message = get_processing_message(user_text, previous_state)
-        status_placeholder.info(processing_message)
-
+        label = get_processing_label(user_text, previous_state)
         try:
-            with st.spinner("잠시만요. 처리 중입니다..."):
+            with st.status(label, expanded=False) as status:
+                status.update(label=label, state="running")
                 next_state = run_turn(previous_state, user_text, user_id=user_id)
                 payload = summarize_turn_result(next_state)
                 assistant_text = format_payload(payload)
                 set_learning_state(next_state)
+                status.update(label="완료", state="complete")
         except RuntimeError as exc:
             assistant_text = f"설정 오류가 발생했습니다: {exc}"
         except Exception as exc:
@@ -286,7 +299,6 @@ def handle_user_input(user_text: str) -> None:
             set_processing(False)
             set_pending_input(None)
 
-        status_placeholder.empty()
         st.markdown(assistant_text)
 
     append_chat_message("assistant", assistant_text)
