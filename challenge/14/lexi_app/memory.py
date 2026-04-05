@@ -1,0 +1,179 @@
+from __future__ import annotations
+
+import logging
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+
+from .config import MEMORY_DB_PATH
+from .state import MemoryRecord, UTC, VocabularyEntry
+
+DEFAULT_USER_ID = "default"
+logger = logging.getLogger(__name__)
+
+
+def initialize_memory_db(db_path: Path = MEMORY_DB_PATH) -> None:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS study_memory (
+                user_id TEXT NOT NULL DEFAULT 'default',
+                word TEXT NOT NULL,
+                lemma TEXT NOT NULL,
+                meaning_in_context TEXT NOT NULL,
+                source_sentence TEXT NOT NULL,
+                context_note TEXT NOT NULL,
+                why_it_matters TEXT NOT NULL DEFAULT '',
+                study_priority TEXT NOT NULL DEFAULT 'medium',
+                created_at TEXT NOT NULL,
+                review_count INTEGER NOT NULL DEFAULT 0,
+                last_reviewed_at TEXT,
+                last_review_result TEXT,
+                PRIMARY KEY (user_id, word)
+            )
+            """
+        )
+        conn.commit()
+    _migrate_schema(db_path)
+
+
+def _migrate_schema(db_path: Path) -> None:
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(study_memory)").fetchall()}
+
+        if "user_id" not in columns:
+            conn.execute("ALTER TABLE study_memory ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'")
+            conn.commit()
+
+        if "why_it_matters" not in columns:
+            conn.execute("ALTER TABLE study_memory ADD COLUMN why_it_matters TEXT NOT NULL DEFAULT ''")
+        if "study_priority" not in columns:
+            conn.execute("ALTER TABLE study_memory ADD COLUMN study_priority TEXT NOT NULL DEFAULT 'medium'")
+        conn.commit()
+
+
+def list_users(db_path: Path = MEMORY_DB_PATH) -> list[str]:
+    if not db_path.exists():
+        return []
+    try:
+        with sqlite3.connect(db_path) as conn:
+            rows = conn.execute("SELECT DISTINCT user_id FROM study_memory ORDER BY user_id").fetchall()
+        return [row[0] for row in rows]
+    except sqlite3.Error as exc:
+        logger.warning("Failed to list users: %s", exc)
+        return []
+
+
+def load_memory_records(user_id: str = DEFAULT_USER_ID, db_path: Path = MEMORY_DB_PATH) -> list[MemoryRecord]:
+    if not db_path.exists():
+        return []
+
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT
+                    word,
+                    lemma,
+                    meaning_in_context,
+                    source_sentence,
+                    context_note,
+                    why_it_matters,
+                    study_priority,
+                    created_at,
+                    review_count,
+                    last_reviewed_at,
+                    last_review_result
+                FROM study_memory
+                WHERE user_id = ?
+                ORDER BY created_at ASC
+                """,
+                (user_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+    except sqlite3.Error as exc:
+        logger.warning("Failed to load memory records: %s", exc)
+        return []
+
+
+def upsert_memory_record(entry: VocabularyEntry, user_id: str = DEFAULT_USER_ID, db_path: Path = MEMORY_DB_PATH) -> None:
+    try:
+        initialize_memory_db(db_path)
+        with sqlite3.connect(db_path) as conn:
+            existing = conn.execute(
+                "SELECT created_at, review_count, last_reviewed_at, last_review_result FROM study_memory WHERE user_id = ? AND word = ?",
+                (user_id, entry["word"]),
+            ).fetchone()
+
+            created_at = existing[0] if existing else datetime.now(UTC).isoformat()
+            review_count = existing[1] if existing else 0
+            last_reviewed_at = existing[2] if existing else None
+            last_review_result = existing[3] if existing else None
+
+            conn.execute(
+                """
+                INSERT INTO study_memory (
+                    user_id,
+                    word,
+                    lemma,
+                    meaning_in_context,
+                    source_sentence,
+                    context_note,
+                    why_it_matters,
+                    study_priority,
+                    created_at,
+                    review_count,
+                    last_reviewed_at,
+                    last_review_result
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, word) DO UPDATE SET
+                    lemma = excluded.lemma,
+                    meaning_in_context = excluded.meaning_in_context,
+                    source_sentence = excluded.source_sentence,
+                    context_note = excluded.context_note,
+                    why_it_matters = excluded.why_it_matters,
+                    study_priority = excluded.study_priority,
+                    created_at = excluded.created_at,
+                    review_count = excluded.review_count,
+                    last_reviewed_at = excluded.last_reviewed_at,
+                    last_review_result = excluded.last_review_result
+                """,
+                (
+                    user_id,
+                    entry["word"],
+                    entry["lemma"],
+                    entry["meaning_in_context"],
+                    entry["source_sentence"],
+                    entry["context_note"],
+                    entry.get("why_it_matters", ""),
+                    entry.get("study_priority", "medium"),
+                    created_at,
+                    review_count,
+                    last_reviewed_at,
+                    last_review_result,
+                ),
+            )
+            conn.commit()
+    except sqlite3.Error as exc:
+        logger.warning("Failed to upsert memory record for '%s': %s", entry.get("word"), exc)
+
+
+def record_review_result(word: str, judgment: str, user_id: str = DEFAULT_USER_ID, db_path: Path = MEMORY_DB_PATH) -> None:
+    try:
+        initialize_memory_db(db_path)
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                """
+                UPDATE study_memory
+                SET review_count = review_count + 1,
+                    last_reviewed_at = ?,
+                    last_review_result = ?
+                WHERE user_id = ? AND word = ?
+                """,
+                (datetime.now(UTC).isoformat(), judgment, user_id, word),
+            )
+            conn.commit()
+    except sqlite3.Error as exc:
+        logger.warning("Failed to record review result for '%s': %s", word, exc)
