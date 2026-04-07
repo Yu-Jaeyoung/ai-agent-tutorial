@@ -33,7 +33,7 @@ def load_environment() -> None:
 
 def get_model_name() -> str:
     load_environment()
-    return os.getenv("GOOGLE_GENAI_MODEL", "gemini-3-flash-preview")
+    return os.getenv("GOOGLE_GENAI_MODEL", "gemini-2.5-pro")
 
 
 @lru_cache(maxsize=1)
